@@ -3,3 +3,4 @@ pandoc
 pymupdf4llm
 fastapi
 psycopg[binary]>=3.1
+pytest

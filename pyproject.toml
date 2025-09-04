@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hr-assist"
+description = "HR Assistant API, service layer, and utilities"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { file = "LICENSE" }
+authors = [
+  { name = "MJHamar" }
+]
+dependencies = [
+  "dspy",
+  "pandoc",
+  "pymupdf4llm",
+  "fastapi",
+  "psycopg[binary]>=3.1",
+]
+dynamic = ["version"]
+
+[project.optional-dependencies]
+dev = [
+  "pytest",
+]
+
+[tool.setuptools.packages.find]
+include = ["hr_assist*"]
+
+[tool.setuptools.dynamic]
+version = { attr = "hr_assist.__version__" }
+
+[tool.pytest.ini_options]
+addopts = "-ra"
+testpaths = ["tests"]
