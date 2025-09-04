@@ -6,8 +6,9 @@ from ..db.model import Candidate, Questionnaire, Document, Job
 
 # Documents
 class DocumentUploadRequest(BaseModel):
-    document_text: str
-    document_name: str
+    # For multipart/form-data uploads, the file is sent separately as UploadFile.
+    # Keep only optional metadata here.
+    document_name: Optional[str] = None
 
 class DocumentUploadResponse(BaseModel):
     document_id: str
@@ -42,7 +43,7 @@ class JobDeleteResponse(BaseModel):
 # Candidates
 class CandidateUploadRequest(BaseModel):
     candidate_name: str
-    candidate_cv: str
+    candidate_cv_id: str
 
 class CandidateUploadResponse(BaseModel):
     candidate_id: str
@@ -81,14 +82,3 @@ __all__ = [
     "CandidateDeleteResponse",
     "CandidateScoreResponse",
 ]
-
-class DocumentUploadResponse(BaseModel):
-    document_id: str
-    status: str
-
-class GenericRequest(BaseModel):
-    payload: dict
-
-class GenericResponse(BaseModel):
-    result: dict
-    status: str

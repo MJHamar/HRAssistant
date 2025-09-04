@@ -1,4 +1,5 @@
-from fastapi import Cookie, FastAPI, Header, Path, HTTPException, Depends, Request, Response
+from fastapi import Cookie, FastAPI, Header, Path, HTTPException, Depends, Request, Response, UploadFile, File, Form
+from typing import Optional
 from fastapi.middleware.cors import CORSMiddleware
 
 from hr_assist.api.model import (
@@ -30,13 +31,21 @@ app = FastAPI(title="HR Assistant API", version=__version__)
 def read_root():
     return {"message": "Welcome to the HR Assistant API. Visit /openapi.json for API documentation."}
 
-@app.post("/documents/", tags=["Documents"], summary="Upload and process a document", response_model=DocumentUploadResponse)
-def upload_document(request: DocumentUploadRequest, service: HRService = Depends()):
-    document_id = service.upload_document(request.document_name, request.document_text.encode())
-    return {
-        "document_id": document_id
-    }
-    
+@app.get("/openapi.json", include_in_schema=False)
+def get_openapi_json():
+    return app.openapi()
+
+@app.post("/documents", tags=["Documents"], summary="Upload and process a document", response_model=DocumentUploadResponse)
+async def upload_document(
+    file: UploadFile = File(...),
+    document_name: Optional[str] = Form(None),
+    service: HRService = Depends(),
+):
+    content_bytes = await file.read()
+    name = document_name or file.filename
+    document_id = service.upload_document(name, content_bytes)
+    return {"document_id": document_id}
+
 @app.get("/documents", tags=["Documents"], summary="List all documents", response_model=DocumentListResponse)
 def list_documents(service: HRService = Depends()):
     documents = service.list_documents()
@@ -103,7 +112,7 @@ def delete_job(job_id: str, service: HRService = Depends()):
 
 @app.post("/candidates", tags=["Candidates"], summary="Upload a new candidate CV", response_model=CandidateUploadResponse)
 def upload_candidate(request: CandidateUploadRequest, service: HRService = Depends()):
-    candidate_id = service.upload_candidate(request.candidate_name, request.candidate_cv)
+    candidate_id = service.upload_candidate(request.candidate_name, request.candidate_cv_id)
     return {
         "candidate_id": candidate_id
     }
