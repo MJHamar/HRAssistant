@@ -1,0 +1,372 @@
+from __future__ import annotations
+
+import os
+from contextlib import contextmanager
+from typing import Any, Dict, Iterable, List, Optional, Tuple
+
+from .base import BaseDb
+from .model import Candidate, CandidateFitness, Document, Job, Questionnaire, QuestionnaireItem
+
+
+def _as_array(val: Optional[List[Any]]) -> Optional[List[Any]]:
+    return None if val is None else list(val)
+
+
+class PostgresDB(BaseDb):
+    def __init__(
+        self,
+        dsn: Optional[str] = None,
+        autocommit: bool = True,
+    ) -> None:
+        # Lazy import psycopg to avoid hard dependency at import time
+        import importlib
+
+        try:
+            self._psycopg = importlib.import_module("psycopg")
+            rows_mod = importlib.import_module("psycopg.rows")
+            types_json_mod = importlib.import_module("psycopg.types.json")
+        except ModuleNotFoundError as e:  # pragma: no cover
+            raise RuntimeError("psycopg is required for PostgresDB") from e
+
+        self._dict_row = getattr(rows_mod, "dict_row")
+        self._Jsonb = getattr(types_json_mod, "Jsonb")
+
+        self._dsn = dsn or os.getenv("DATABASE_URL") or "postgresql://localhost/hr_assistant"
+        self._conn = self._psycopg.connect(self._dsn, autocommit=autocommit, row_factory=self._dict_row)
+        self._ensure_schema()
+
+    def close(self) -> None:
+        self._conn.close()
+
+    def ping(self) -> bool:
+        try:
+            with self._conn.cursor() as cur:
+                cur.execute("SELECT 1")
+                _ = cur.fetchone()
+            return True
+        except Exception:
+            return False
+
+    @contextmanager
+    def _cursor(self):
+        with self._conn.cursor() as cur:
+            yield cur
+
+    def _ensure_schema(self) -> None:
+        with self._cursor() as cur:
+            # Enable pgvector if available
+            cur.execute("""
+                CREATE EXTENSION IF NOT EXISTS vector;
+            """)
+            # Documents
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS documents (
+                    id TEXT PRIMARY KEY,
+                    contents TEXT,
+                    chunks TEXT[],
+                    metadata JSONB
+                );
+                """
+            )
+            # Jobs
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS jobs (
+                    id TEXT PRIMARY KEY,
+                    company_name TEXT,
+                    job_title TEXT NOT NULL,
+                    job_description TEXT NOT NULL
+                );
+                """
+            )
+            # Candidates
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS candidates (
+                    id TEXT PRIMARY KEY,
+                    candidate_name TEXT,
+                    candidate_cv_id TEXT
+                );
+                """
+            )
+            # Questionnaires
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS questionnaires (
+                    id TEXT PRIMARY KEY,
+                    job_id TEXT NOT NULL,
+                    questionnaire JSONB NOT NULL
+                );
+                """
+            )
+            # Candidate fitness
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS candidate_fitness (
+                    candidate_id TEXT NOT NULL,
+                    job_id TEXT NOT NULL,
+                    questionnaire_id TEXT NOT NULL,
+                    scores REAL[] NOT NULL,
+                    PRIMARY KEY (candidate_id, job_id, questionnaire_id)
+                );
+                """
+            )
+            # Generic embeddings table
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS embeddings (
+                    table_name TEXT NOT NULL,
+                    record_id TEXT NOT NULL,
+                    embedding vector(1536),
+                    metadata JSONB,
+                    PRIMARY KEY (table_name, record_id)
+                );
+                """
+            )
+
+    # ---- Generic query
+    def query(
+        self,
+        table: str,
+        filters: Optional[Dict[str, Any]] = None,
+        limit: Optional[int] = None,
+        offset: int = 0,
+        order_by: Optional[Iterable[str]] = None,
+        columns: Optional[Iterable[str]] = None,
+    ) -> List[Dict[str, Any]]:
+        cols = ", ".join(columns) if columns else "*"
+        sql = [f"SELECT {cols} FROM {table}"]
+        params: List[Any] = []
+
+        if filters:
+            where_clauses = []
+            for k, v in filters.items():
+                if isinstance(v, dict):
+                    where_clauses.append(f"{k} @> %s")
+                    params.append(self._Jsonb(v))
+                else:
+                    where_clauses.append(f"{k} = %s")
+                    params.append(v)
+            sql.append("WHERE " + " AND ".join(where_clauses))
+
+        if order_by:
+            parts = []
+            for ob in order_by:
+                if ob.startswith("-"):
+                    parts.append(f"{ob[1:]} DESC")
+                else:
+                    parts.append(f"{ob} ASC")
+            sql.append("ORDER BY " + ", ".join(parts))
+
+        if limit is not None:
+            sql.append("LIMIT %s")
+            params.append(limit)
+        if offset:
+            sql.append("OFFSET %s")
+            params.append(offset)
+
+        query_str = " ".join(sql)
+        with self._cursor() as cur:
+            cur.execute(query_str, params)
+            rows = cur.fetchall() or []
+        return rows
+
+    # ---- Documents
+    def upsert_document(self, doc: Document) -> None:
+        with self._cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO documents (id, contents, chunks, metadata)
+                VALUES (%s, %s, %s, %s)
+                ON CONFLICT (id) DO UPDATE SET
+                    contents = EXCLUDED.contents,
+                    chunks = EXCLUDED.chunks,
+                    metadata = EXCLUDED.metadata
+                """,
+                [doc.id, doc.contents, _as_array(doc.chunks), self._Jsonb(doc.metadata) if doc.metadata is not None else None],
+            )
+
+    def get_document(self, doc_id: str) -> Optional[Document]:
+        with self._cursor() as cur:
+            cur.execute("SELECT * FROM documents WHERE id = %s", [doc_id])
+            row = cur.fetchone()
+        if not row:
+            return None
+        return Document(**row)
+
+    def list_documents(self, limit: Optional[int] = None, offset: int = 0) -> List[Document]:
+        rows = self.query("documents", limit=limit, offset=offset, order_by=["id"])
+        return [Document(**r) for r in rows]
+
+    def delete_document(self, doc_id: str) -> bool:
+        with self._cursor() as cur:
+            cur.execute("DELETE FROM documents WHERE id = %s", [doc_id])
+            return cur.rowcount > 0
+
+    # ---- Jobs
+    def upsert_job(self, job: Job) -> None:
+        with self._cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO jobs (id, company_name, job_title, job_description)
+                VALUES (%s, %s, %s, %s)
+                ON CONFLICT (id) DO UPDATE SET
+                    company_name = EXCLUDED.company_name,
+                    job_title = EXCLUDED.job_title,
+                    job_description = EXCLUDED.job_description
+                """,
+                [job.id, job.company_name, job.job_title, job.job_description],
+            )
+
+    def get_job(self, job_id: str) -> Optional[Job]:
+        with self._cursor() as cur:
+            cur.execute("SELECT * FROM jobs WHERE id = %s", [job_id])
+            row = cur.fetchone()
+        return Job(**row) if row else None
+
+    def list_jobs(self, limit: Optional[int] = None, offset: int = 0) -> List[Job]:
+        rows = self.query("jobs", limit=limit, offset=offset, order_by=["id"])
+        return [Job(**r) for r in rows]
+
+    def delete_job(self, job_id: str) -> bool:
+        with self._cursor() as cur:
+            cur.execute("DELETE FROM jobs WHERE id = %s", [job_id])
+            return cur.rowcount > 0
+
+    # ---- Candidates
+    def upsert_candidate(self, candidate: Candidate) -> None:
+        with self._cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO candidates (id, candidate_name, candidate_cv_id)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (id) DO UPDATE SET
+                    candidate_name = EXCLUDED.candidate_name,
+                    candidate_cv_id = EXCLUDED.candidate_cv_id
+                """,
+                [candidate.id, candidate.candidate_name, candidate.candidate_cv_id],
+            )
+
+    def get_candidate(self, candidate_id: str) -> Optional[Candidate]:
+        with self._cursor() as cur:
+            cur.execute("SELECT * FROM candidates WHERE id = %s", [candidate_id])
+            row = cur.fetchone()
+        return Candidate(**row) if row else None
+
+    def list_candidates(self, limit: Optional[int] = None, offset: int = 0) -> List[Candidate]:
+        rows = self.query("candidates", limit=limit, offset=offset, order_by=["id"])
+        return [Candidate(**r) for r in rows]
+
+    def delete_candidate(self, candidate_id: str) -> bool:
+        with self._cursor() as cur:
+            cur.execute("DELETE FROM candidates WHERE id = %s", [candidate_id])
+            return cur.rowcount > 0
+
+    # ---- Questionnaire
+    def upsert_questionnaire(self, questionnaire: Questionnaire) -> None:
+        payload = {"questionnaire": [qi.model_dump() for qi in questionnaire.questionnaire]}
+        with self._cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO questionnaires (id, job_id, questionnaire)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (id) DO UPDATE SET
+                    job_id = EXCLUDED.job_id,
+                    questionnaire = EXCLUDED.questionnaire
+                """,
+                [questionnaire.id, questionnaire.job_id, self._Jsonb(payload)],
+            )
+
+    def get_questionnaire(self, questionnaire_id: str) -> Optional[Questionnaire]:
+        with self._cursor() as cur:
+            cur.execute("SELECT * FROM questionnaires WHERE id = %s", [questionnaire_id])
+            row = cur.fetchone()
+        if not row:
+            return None
+        q_items = [QuestionnaireItem(**qi) for qi in (row["questionnaire"] or {}).get("questionnaire", [])]
+        return Questionnaire(id=row["id"], job_id=row["job_id"], questionnaire=q_items)
+
+    def list_questionnaires(
+        self, job_id: Optional[str] = None, limit: Optional[int] = None, offset: int = 0
+    ) -> List[Questionnaire]:
+        filters = {"job_id": job_id} if job_id else None
+        rows = self.query("questionnaires", filters=filters, limit=limit, offset=offset, order_by=["id"])
+        items: List[Questionnaire] = []
+        for r in rows:
+            q_items = [QuestionnaireItem(**qi) for qi in (r["questionnaire"] or {}).get("questionnaire", [])]
+            items.append(Questionnaire(id=r["id"], job_id=r["job_id"], questionnaire=q_items))
+        return items
+
+    # ---- Candidate Fitness
+    def upsert_candidate_fitness(self, fitness: CandidateFitness) -> None:
+        with self._cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO candidate_fitness (candidate_id, job_id, questionnaire_id, scores)
+                VALUES (%s, %s, %s, %s)
+                ON CONFLICT (candidate_id, job_id, questionnaire_id) DO UPDATE SET
+                    scores = EXCLUDED.scores
+                """,
+                [fitness.candidate_id, fitness.job_id, fitness.questionnaire_id, fitness.scores],
+            )
+
+    def get_candidate_fitness(self, candidate_id: str, job_id: str, questionnaire_id: str):
+        with self._cursor() as cur:
+            cur.execute(
+                """
+                SELECT * FROM candidate_fitness WHERE candidate_id = %s AND job_id = %s AND questionnaire_id = %s
+                """,
+                [candidate_id, job_id, questionnaire_id],
+            )
+            row = cur.fetchone()
+        return CandidateFitness(**row) if row else None
+
+    # ---- Vectors
+    def upsert_embedding(
+        self,
+        table: str,
+        record_id: str,
+        embedding: List[float],
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        with self._cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO embeddings (table_name, record_id, embedding, metadata)
+                VALUES (%s, %s, %s, %s)
+                ON CONFLICT (table_name, record_id) DO UPDATE SET
+                    embedding = EXCLUDED.embedding,
+                    metadata = EXCLUDED.metadata
+                """,
+                [table, record_id, embedding, self._Jsonb(metadata) if metadata is not None else None],
+            )
+
+    def vector_search(
+        self,
+        table: str,
+        query_embedding: List[float],
+        top_k: int = 5,
+        filters: Optional[Dict[str, Any]] = None,
+        metric: str = "cosine",
+    ) -> List[Tuple[str, float]]:
+        op = "<=>" if metric == "cosine" else "<->"  # default to euclidean if not cosine
+        sql = [
+            "SELECT record_id, 1 - (embedding %s %s) AS score FROM embeddings WHERE table_name = %s"
+            % (op, "%s")
+        ]
+        params: List[Any] = [query_embedding, table]
+        if filters:
+            for k, v in filters.items():
+                sql.append("AND (metadata ->> %s) = %s")
+                params.extend([k, str(v)])
+        sql.append("ORDER BY score DESC LIMIT %s")
+        params.append(top_k)
+        query_str = " ".join(sql)
+        with self._cursor() as cur:
+            cur.execute(query_str, params)
+            rows = cur.fetchall() or []
+        return [(r["record_id"], float(r["score"])) for r in rows]
+
+
+__all__ = ["PostgresDB"]

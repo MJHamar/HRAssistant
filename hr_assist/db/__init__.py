@@ -7,3 +7,7 @@ Supports
 Current implementation only supports PostgreSQL and pg-vector databases.
 """
 
+from .base import BaseDb
+from .pg import PostgresDB
+
+__all__ = ["BaseDb", "PostgresDB"]

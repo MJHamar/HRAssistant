@@ -1,0 +1,154 @@
+from __future__ import annotations
+
+from abc import ABC, abstractmethod
+from typing import Any, Dict, Iterable, List, Optional, Tuple
+
+from .model import (
+    Candidate,
+    CandidateFitness,
+    Document,
+    Job,
+    Questionnaire,
+)
+
+
+class BaseDb(ABC):
+    """
+    Abstract interface for HR Assistant database backends.
+
+    Goals:
+    - Provide flexible CRUD/query access across all tables.
+    - Handle list/dict fields appropriately (arrays/JSON).
+    - Offer optional vector support (store/search embeddings).
+    """
+
+    # ---- Generic helpers
+    @abstractmethod
+    def close(self) -> None:
+        """Close any open resources/connections."""
+
+    @abstractmethod
+    def ping(self) -> bool:
+        """Return True if the DB is reachable/healthy."""
+
+    @abstractmethod
+    def query(
+        self,
+        table: str,
+        filters: Optional[Dict[str, Any]] = None,
+        limit: Optional[int] = None,
+        offset: int = 0,
+        order_by: Optional[Iterable[str]] = None,
+        columns: Optional[Iterable[str]] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Generic query over a table.
+        - filters: dict of column -> exact match, JSON containment for JSON columns.
+        - order_by: iterable of column names, prefix with '-' for DESC.
+        - columns: subset of columns to return; defaults to all.
+        """
+
+    # ---- Documents
+    @abstractmethod
+    def upsert_document(self, doc: Document) -> None:
+        pass
+
+    @abstractmethod
+    def get_document(self, doc_id: str) -> Optional[Document]:
+        pass
+
+    @abstractmethod
+    def list_documents(self, limit: Optional[int] = None, offset: int = 0) -> List[Document]:
+        pass
+
+    @abstractmethod
+    def delete_document(self, doc_id: str) -> bool:
+        pass
+
+    # ---- Jobs
+    @abstractmethod
+    def upsert_job(self, job: Job) -> None:
+        pass
+
+    @abstractmethod
+    def get_job(self, job_id: str) -> Optional[Job]:
+        pass
+
+    @abstractmethod
+    def list_jobs(self, limit: Optional[int] = None, offset: int = 0) -> List[Job]:
+        pass
+
+    @abstractmethod
+    def delete_job(self, job_id: str) -> bool:
+        pass
+
+    # ---- Candidates
+    @abstractmethod
+    def upsert_candidate(self, candidate: Candidate) -> None:
+        pass
+
+    @abstractmethod
+    def get_candidate(self, candidate_id: str) -> Optional[Candidate]:
+        pass
+
+    @abstractmethod
+    def list_candidates(self, limit: Optional[int] = None, offset: int = 0) -> List[Candidate]:
+        pass
+
+    @abstractmethod
+    def delete_candidate(self, candidate_id: str) -> bool:
+        pass
+
+    # ---- Questionnaire
+    @abstractmethod
+    def upsert_questionnaire(self, questionnaire: Questionnaire) -> None:
+        pass
+
+    @abstractmethod
+    def get_questionnaire(self, questionnaire_id: str) -> Optional[Questionnaire]:
+        pass
+
+    @abstractmethod
+    def list_questionnaires(
+        self, job_id: Optional[str] = None, limit: Optional[int] = None, offset: int = 0
+    ) -> List[Questionnaire]:
+        pass
+
+    # ---- Candidate Fitness
+    @abstractmethod
+    def upsert_candidate_fitness(self, fitness: CandidateFitness) -> None:
+        pass
+
+    @abstractmethod
+    def get_candidate_fitness(
+        self, candidate_id: str, job_id: str, questionnaire_id: str
+    ) -> Optional[CandidateFitness]:
+        pass
+
+    # ---- Vector support
+    @abstractmethod
+    def upsert_embedding(
+        self,
+        table: str,
+        record_id: str,
+        embedding: List[float],
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Store or update an embedding for a given record."""
+
+    @abstractmethod
+    def vector_search(
+        self,
+        table: str,
+        query_embedding: List[float],
+        top_k: int = 5,
+        filters: Optional[Dict[str, Any]] = None,
+        metric: str = "cosine",
+    ) -> List[Tuple[str, float]]:
+        """
+        Return a list of (record_id, score), higher score means more similar for cosine.
+        Implementations may use pgvector, external vector DBs, or in-memory fallback.
+        """
+
+
+__all__ = ["BaseDb"]
