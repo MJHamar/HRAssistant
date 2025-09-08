@@ -3,9 +3,19 @@ CREATE EXTENSION IF NOT EXISTS vector;
 
 CREATE TABLE IF NOT EXISTS documents (
     id TEXT PRIMARY KEY,
-    contents TEXT,
-    chunks TEXT[],
-    metadata JSONB
+    content TEXT
+);
+
+CREATE TABLE IF NOT EXISTS document_chunks (
+    document_id TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    idx INT NOT NULL,
+    metadata JSONB,
+    toc_items JSONB,
+    tables JSONB,
+    images JSONB,
+    graphics JSONB,
+    text TEXT,
+    PRIMARY KEY (document_id, idx)
 );
 
 CREATE TABLE IF NOT EXISTS jobs (

@@ -6,7 +6,7 @@ from contextlib import contextmanager
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from .base import BaseDb
-from .model import Candidate, CandidateFitness, Document, Job, Questionnaire, QuestionnaireItem
+from .model import Candidate, CandidateFitness, Document, DocumentChunk, Job, Questionnaire, QuestionnaireItem
 
 
 def _as_array(val: Optional[List[Any]]) -> Optional[List[Any]]:
@@ -114,27 +114,49 @@ class PostgresDB(BaseDb):
         with self._cursor() as cur:
             cur.execute(
                 """
-                INSERT INTO documents (id, contents, chunks, metadata)
-                VALUES (%s, %s, %s, %s)
-                ON CONFLICT (id) DO UPDATE SET
-                    contents = EXCLUDED.contents,
-                    chunks = EXCLUDED.chunks,
-                    metadata = EXCLUDED.metadata
+                INSERT INTO documents (id, content) VALUES (%s, %s)
+                ON CONFLICT (id) DO UPDATE SET content = EXCLUDED.content
                 """,
-                [doc.id, doc.contents, _as_array(doc.chunks), self._Jsonb(doc.metadata) if doc.metadata is not None else None],
+                [doc.id, doc.content],
             )
+            # Replace chunks
+            cur.execute("DELETE FROM document_chunks WHERE document_id = %s", [doc.id])
+            if doc.chunks:
+                for ch in doc.chunks:
+                    cur.execute(
+                        """
+                        INSERT INTO document_chunks (document_id, idx, metadata, toc_items, tables, images, graphics, text)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                        """,
+                        [
+                            ch.document_id,
+                            ch.idx,
+                            self._Jsonb(ch.metadata) if ch.metadata is not None else None,
+                            self._Jsonb(ch.toc_items) if ch.toc_items is not None else None,
+                            self._Jsonb(ch.tables) if ch.tables is not None else None,
+                            self._Jsonb(ch.images) if ch.images is not None else None,
+                            self._Jsonb(ch.graphics) if ch.graphics is not None else None,
+                            ch.text,
+                        ],
+                    )
 
     def get_document(self, doc_id: str) -> Optional[Document]:
         with self._cursor() as cur:
             cur.execute("SELECT * FROM documents WHERE id = %s", [doc_id])
             row = cur.fetchone()
-        if not row:
-            return None
-        return Document(**row)
+            if not row:
+                return None
+            cur.execute(
+                "SELECT document_id, idx, metadata, toc_items, tables, images, graphics, text FROM document_chunks WHERE document_id = %s ORDER BY idx ASC",
+                [doc_id],
+            )
+            chunk_rows = cur.fetchall() or []
+        chunks = [DocumentChunk(**cr) for cr in chunk_rows]
+        return Document(id=row["id"], content=row.get("content"), chunks=chunks)
 
     def list_documents(self, limit: Optional[int] = None, offset: int = 0) -> List[Document]:
         rows = self.query("documents", limit=limit, offset=offset, order_by=["id"])
-        return [Document(**r) for r in rows]
+        return [Document(id=r["id"], content=r.get("content"), chunks=None) for r in rows]
 
     def delete_document(self, doc_id: str) -> bool:
         with self._cursor() as cur:

@@ -7,7 +7,7 @@ from uuid import uuid4
 from ..func.lm import score_candidate as lm_score_candidate, make_questionnaire as lm_make_questionnaire
 from ..utils import doc_to_md
 from ..db import PostgresDB, BaseDb
-from ..db.model import Document, Job, Candidate, QuestionnaireItem, Questionnaire
+from ..db.model import Document, DocumentChunk, Job, Candidate, QuestionnaireItem, Questionnaire
 
 
 class HRService:
@@ -16,38 +16,50 @@ class HRService:
     
     def set_db(self, db: BaseDb) -> None:
         self._db = db
-    
+
     @property
     def db(self) -> BaseDb:
         return self._db
 
     # ---- Documents ----
-    def convert_document(self, document_name: str, document_content: bytes) -> Tuple[str, List[str], Dict[str, Any]]:
-        """Convert raw document bytes into markdown, chunked content, and metadata."""
-        contents, chunked_content, metadata = doc_to_md(document_content)
-        # include document name in metadata if not present
-        if metadata is None:
-            metadata = {}
-        if document_name and "document_name" not in metadata:
-            metadata["document_name"] = document_name
-        return contents, chunked_content, metadata
+    def convert_document(self, document_name: str, document_content: bytes) -> Tuple[str, List[DocumentChunk]]:
+        """Convert raw document bytes into unified text content plus structured chunks."""
+        # Existing util returns (converted_doc, page_chunked, metadata)
+        converted_doc, page_chunked, _ = doc_to_md(document_name, document_content)
+        # page_chunked expected list of dicts with 'text' and maybe 'metadata'
+        return converted_doc, page_chunked
 
     def upload_document(self, document_name: str, document_content: bytes) -> str:
-        """Convert and persist a document, returning its id."""
-        contents, chunks, metadata = self.convert_document(document_name, document_content)
+        content, page_chunked = self.convert_document(document_name, document_content)
         doc_id = str(uuid4())
-        doc = Document(id=doc_id, contents=contents, chunks=chunks, metadata=metadata)
+        # attach document_id to chunks
+        chunks: List[DocumentChunk] = []
+        for idx, raw in enumerate(page_chunked):
+            chunks.append(
+                DocumentChunk(
+                    document_id=doc_id,
+                    idx=idx,
+                    metadata=raw.get("metadata"),
+                    toc_items=raw.get("toc_items"),
+                    tables=raw.get("tables"),
+                    images=raw.get("images"),
+                    graphics=raw.get("graphics"),
+                    text=raw.get("text"),
+                )
+            )
+        doc = Document(id=doc_id, content=content, chunks=chunks)
         self.db.upsert_document(doc)
         return doc_id
-
+    
     def list_documents(self) -> List[Document]:
         return self.db.list_documents()
 
-    def get_document(self, document_id: str) -> Tuple[Optional[str], Optional[List[str]], Optional[Dict[str, Any]]]:
+    def get_document(self, document_id: str) -> Tuple[Optional[str], Optional[List[Dict[str, Any]]]]:
         doc = self.db.get_document(document_id)
         if not doc:
-            return None, None, None
-        return doc.contents, doc.chunks, doc.metadata
+            return None, None
+        chunk_payload = [c.model_dump() for c in (doc.chunks or [])]
+        return doc.content, chunk_payload
 
     def delete_document(self, document_id: str) -> bool:
         return self.db.delete_document(document_id)

@@ -63,14 +63,13 @@ def list_documents(service: HRService = Depends()):
 
 @app.get("/documents/{document_id}", tags=["Documents"], summary="Retrieve a document", response_model=DocumentResponse)
 def get_document(document_id: str, service: HRService = Depends()):
-    contents, chunks, metadata = service.get_document(document_id)
-    if not contents:
+    content, chunks = service.get_document(document_id)
+    if not content:
         raise HTTPException(status_code=404, detail="Document not found")
     return {
-        "document_id": document_id,
-        "contents": contents,
+        "id": document_id,
+        "content": content,
         "chunks": chunks,
-        "metadata": metadata
     }
 
 @app.delete("/documents/{document_id}", tags=["Documents"], summary="Delete a document", response_model=DocumentDeleteResponse)

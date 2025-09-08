@@ -212,7 +212,6 @@
       const file = fileInput.files[0];
       const fd = new FormData();
       fd.append('file', file);
-      fd.append('document_name', file.name);
       const res = await fetch(`${API_BASE}/documents`, { method: 'POST', body: fd });
       if (!res.ok) return alert('Failed to upload CV');
       const { document_id } = await res.json();
