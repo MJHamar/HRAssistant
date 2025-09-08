@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>HR Assistant</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <!-- Navigation -->
+    <nav id="top-nav">
+      <button data-page="home" class="nav-btn active">Home</button>
+      <button data-page="jobs" class="nav-btn">Jobs</button>
+      <button data-page="candidates" class="nav-btn">Candidates</button>
+      <button data-page="search" class="nav-btn">Search</button>
+    </nav>
+
+    <!-- Pages -->
+    <main>
+      <section id="page-home" class="page visible">
+        <h1>Welcome to HR Assistant</h1>
+        <p>Use the navigation to manage Jobs, Candidates, and Search.</p>
+      </section>
+
+      <section id="page-jobs" class="page">
+        <header class="page-header">
+          <h2>Jobs</h2>
+          <div class="actions">
+            <button id="btn-add-job" class="primary">Add Job</button>
+          </div>
+        </header>
+        <div id="jobs-list" class="list"></div>
+      </section>
+
+      <section id="page-candidates" class="page">
+        <header class="page-header">
+          <h2>Candidates</h2>
+          <div class="actions">
+            <button id="btn-add-candidate" class="primary">Add Candidate</button>
+          </div>
+        </header>
+        <div id="candidates-list" class="list"></div>
+      </section>
+
+      <section id="page-search" class="page">
+        <header class="page-header">
+          <h2>Search</h2>
+          <div class="actions">
+            <button id="btn-search-add-job" class="primary">Add Job</button>
+          </div>
+        </header>
+        <div class="search-controls">
+          <label for="search-job-select">Job:</label>
+          <select id="search-job-select"></select>
+        </div>
+        <div id="search-info" class="muted"></div>
+      </section>
+    </main>
+
+    <!-- Modals -->
+    <div id="modal-backdrop" class="modal-backdrop hidden"></div>
+
+    <div id="modal-add-job" class="modal hidden" role="dialog" aria-modal="true">
+      <div class="modal-content">
+        <h3>Add Job</h3>
+        <form id="form-add-job">
+          <label>Company Name
+            <input type="text" name="company_name" placeholder="Company" />
+          </label>
+          <label>Job Title
+            <input type="text" name="job_title" placeholder="Job Title" required />
+          </label>
+          <label>Job Description
+            <textarea name="job_description" placeholder="Description" rows="6" required></textarea>
+          </label>
+          <div class="modal-actions">
+            <button type="button" class="secondary" data-close>Cancel</button>
+            <button type="submit" class="primary">Save</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <div id="modal-add-candidate" class="modal hidden" role="dialog" aria-modal="true">
+      <div class="modal-content">
+        <h3>Add Candidate</h3>
+        <form id="form-add-candidate">
+          <label>Candidate Name
+            <input type="text" name="candidate_name" placeholder="Full Name" required />
+          </label>
+          <label>Upload CV (PDF/DOC/TXT)
+            <input type="file" name="cv_file" accept=".pdf,.doc,.docx,.txt,.md" required />
+          </label>
+          <div class="modal-actions">
+            <button type="button" class="secondary" data-close>Cancel</button>
+            <button type="submit" class="primary">Save</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <script src="main.js"></script>
+  </body>
+  </html>
