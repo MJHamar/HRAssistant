@@ -27,6 +27,14 @@ from .service import HRService
 
 app = FastAPI(title="HR Assistant API", version=__version__)
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3140"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 @app.get("/", tags=["Root"])
 def read_root():
     return {"message": "Welcome to the HR Assistant API. Visit /openapi.json for API documentation."}

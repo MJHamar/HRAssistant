@@ -11,9 +11,12 @@ from ..db.model import Document, Job, Candidate, QuestionnaireItem, Questionnair
 
 
 class HRService:
-    def __init__(self, db: Optional[BaseDb] = None):
-        self._db: BaseDb = db or PostgresDB()
-
+    def __init__(self):
+        self._db: BaseDb = PostgresDB()
+    
+    def set_db(self, db: BaseDb) -> None:
+        self._db = db
+    
     @property
     def db(self) -> BaseDb:
         return self._db
