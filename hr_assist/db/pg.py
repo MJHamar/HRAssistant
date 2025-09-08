@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from contextlib import contextmanager
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
@@ -31,9 +32,18 @@ class PostgresDB(BaseDb):
         self._dict_row = getattr(rows_mod, "dict_row")
         self._Jsonb = getattr(types_json_mod, "Jsonb")
 
-        self._dsn = dsn or os.getenv("DATABASE_URL") or "postgresql://localhost/hr_assistant"
+        if not dsn:
+            self._db_user = os.getenv("DATABASE_USER") or "postgres"
+            self._db_password = os.getenv("DATABASE_PASSWORD") or "password"
+            self._db_host = os.getenv("DATABASE_HOST") or "localhost"
+            self._db_name = os.getenv("DATABASE_DB") or "hr_assistant"
+            self._dsn = f"postgresql://{self._db_user}:{self._db_password}@{self._db_host}/{self._db_name}"
+        else:
+            self._dsn = dsn
+
+        import psycopg
+        self._psycopg = psycopg
         self._conn = self._psycopg.connect(self._dsn, autocommit=autocommit, row_factory=self._dict_row)
-        self._ensure_schema()
 
     def close(self) -> None:
         self._conn.close()
@@ -51,80 +61,7 @@ class PostgresDB(BaseDb):
     def _cursor(self):
         with self._conn.cursor() as cur:
             yield cur
-
-    def _ensure_schema(self) -> None:
-        with self._cursor() as cur:
-            # Enable pgvector if available
-            cur.execute("""
-                CREATE EXTENSION IF NOT EXISTS vector;
-            """)
-            # Documents
-            cur.execute(
-                """
-                CREATE TABLE IF NOT EXISTS documents (
-                    id TEXT PRIMARY KEY,
-                    contents TEXT,
-                    chunks TEXT[],
-                    metadata JSONB
-                );
-                """
-            )
-            # Jobs
-            cur.execute(
-                """
-                CREATE TABLE IF NOT EXISTS jobs (
-                    id TEXT PRIMARY KEY,
-                    company_name TEXT,
-                    job_title TEXT NOT NULL,
-                    job_description TEXT NOT NULL
-                );
-                """
-            )
-            # Candidates
-            cur.execute(
-                """
-                CREATE TABLE IF NOT EXISTS candidates (
-                    id TEXT PRIMARY KEY,
-                    candidate_name TEXT,
-                    candidate_cv_id TEXT
-                );
-                """
-            )
-            # Questionnaires
-            cur.execute(
-                """
-                CREATE TABLE IF NOT EXISTS questionnaires (
-                    id TEXT PRIMARY KEY,
-                    job_id TEXT NOT NULL,
-                    questionnaire JSONB NOT NULL
-                );
-                """
-            )
-            # Candidate fitness
-            cur.execute(
-                """
-                CREATE TABLE IF NOT EXISTS candidate_fitness (
-                    candidate_id TEXT NOT NULL,
-                    job_id TEXT NOT NULL,
-                    questionnaire_id TEXT NOT NULL,
-                    scores REAL[] NOT NULL,
-                    PRIMARY KEY (candidate_id, job_id, questionnaire_id)
-                );
-                """
-            )
-            # Generic embeddings table
-            cur.execute(
-                """
-                CREATE TABLE IF NOT EXISTS embeddings (
-                    table_name TEXT NOT NULL,
-                    record_id TEXT NOT NULL,
-                    embedding vector(1536),
-                    metadata JSONB,
-                    PRIMARY KEY (table_name, record_id)
-                );
-                """
-            )
-
+    
     # ---- Generic query
     def query(
         self,
