@@ -30,6 +30,12 @@ class JobUploadRequest(BaseModel):
 class JobUploadResponse(BaseModel):
     job_id: str
 
+class JobPatchRequest(BaseModel):
+    """Partial update for a Job. All fields optional."""
+    company_name: Optional[str] = None
+    job_title: Optional[str] = None
+    job_description: Optional[str] = None
+
 QuestionnaireResponse = Questionnaire
 
 class JobListResponse(BaseModel):
@@ -47,6 +53,11 @@ class CandidateUploadRequest(BaseModel):
 
 class CandidateUploadResponse(BaseModel):
     candidate_id: str
+
+class CandidatePatchRequest(BaseModel):
+    """Partial update for a Candidate. All fields optional."""
+    candidate_name: Optional[str] = None
+    candidate_cv_id: Optional[str] = None
 
 class CandidateListResponse(BaseModel):
     candidates: List[Candidate]
@@ -70,6 +81,7 @@ __all__ = [
     # Jobs
     "JobUploadRequest",
     "JobUploadResponse",
+    "JobPatchRequest",
     "QuestionnaireResponse",
     "JobListResponse",
     "JobResponse",
@@ -77,6 +89,7 @@ __all__ = [
     # Candidates
     "CandidateUploadRequest",
     "CandidateUploadResponse",
+    "CandidatePatchRequest",
     "CandidateListResponse",
     "CandidateResponse",
     "CandidateDeleteResponse",

@@ -80,7 +80,7 @@
         </div>
       </div>`;
 
-    const headerBtn = el.querySelector('.card-header .link');
+    const headerBtn = el.querySelector('.card-header');
     const body = el.querySelector('.card-body');
     headerBtn.addEventListener('click', () => {
       const expanded = el.classList.toggle('expanded');
@@ -94,8 +94,21 @@
       const currentlyDisabled = inputs[0]?.disabled ?? true;
       inputs.forEach(i => (i.disabled = !currentlyDisabled));
       btnEdit.textContent = currentlyDisabled ? 'Save' : 'Edit';
-      if (!currentlyDisabled) {
-        // TODO: call API to persist edit when implemented
+      if (currentlyDisabled) {
+        // entering edit mode
+      } else {
+        // save
+        const [titleInput, companyInput] = body.querySelectorAll('input');
+        const descTextarea = body.querySelector('textarea');
+        fetch(`${API_BASE}/jobs/${job.id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            job_title: titleInput.value,
+            company_name: companyInput.value,
+            job_description: descTextarea.value,
+          }),
+        }).then(r => { if(!r.ok) alert('Failed to save job'); });
       }
     });
 
@@ -181,7 +194,7 @@
         </div>
       </div>`;
 
-    const headerBtn = el.querySelector('.card-header .link');
+    const headerBtn = el.querySelector('.card-header');
     const body = el.querySelector('.card-body');
     const pre = body.querySelector('pre');
     headerBtn.addEventListener('click', async () => {
@@ -189,7 +202,7 @@
       headerBtn.setAttribute('aria-expanded', String(expanded));
       if (expanded && c.candidate_cv_id) {
         const doc = await fetchDocument(c.candidate_cv_id);
-        pre.textContent = doc ? doc.contents : '(No CV)';
+        pre.textContent = doc ? doc.content : '(No CV)';
       }
     });
 
@@ -201,7 +214,12 @@
       nameInput.disabled = !editable;
       btnEdit.textContent = editable ? 'Save' : 'Edit';
       if (!editable) {
-        // TODO: persist edit when API exists
+        // save
+        fetch(`${API_BASE}/candidates/${c.id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ candidate_name: nameInput.value })
+        }).then(r => { if(!r.ok) alert('Failed to save candidate'); else c.candidate_name = nameInput.value; });
       }
     });
 
@@ -215,10 +233,16 @@
       const res = await fetch(`${API_BASE}/documents`, { method: 'POST', body: fd });
       if (!res.ok) return alert('Failed to upload CV');
       const { document_id } = await res.json();
-      // TODO: call API to update candidate's candidate_cv_id once endpoint exists
+      // patch candidate with new CV id
+      const r2 = await fetch(`${API_BASE}/candidates/${c.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ candidate_cv_id: document_id })
+      });
+      if(!r2.ok) { alert('Failed to link CV to candidate'); return; }
       c.candidate_cv_id = document_id;
       const doc = await fetchDocument(document_id);
-      pre.textContent = doc ? doc.contents : '';
+      pre.textContent = doc ? doc.content : '';
     });
 
     return el;

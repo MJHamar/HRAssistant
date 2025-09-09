@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 from contextlib import contextmanager
 from typing import Any, Dict, Iterable, List, Optional, Tuple
@@ -108,6 +109,46 @@ class PostgresDB(BaseDb):
             cur.execute(query_str, params)
             rows = cur.fetchall() or []
         return rows
+
+    def modify(self, table: str, key: Dict[str, Any], changes: Dict[str, Any]) -> bool:
+        def _is_safe_ident(s: str) -> bool:
+            return bool(re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", s or ""))
+
+        if not table or not isinstance(key, dict) or not key:
+            raise ValueError("modify requires a table and a non-empty key dict")
+        if not isinstance(changes, dict) or not changes:
+            return False
+        if not _is_safe_ident(table):
+            raise ValueError("invalid table name")
+        for k in list(key.keys()) + list(changes.keys()):
+            if not _is_safe_ident(k):
+                raise ValueError("invalid column name")
+        # Filter out None values so we don't overwrite with NULL inadvertently
+        filtered = {k: v for k, v in changes.items() if v is not None}
+        if not filtered:
+            return False
+        set_clauses: List[str] = []
+        params: List[Any] = []
+        for col, val in filtered.items():
+            # Heuristic: wrap dicts/lists as JSONB
+            if isinstance(val, (dict, list)):
+                set_clauses.append(f"{col} = %s")
+                params.append(self._Jsonb(val))
+            else:
+                set_clauses.append(f"{col} = %s")
+                params.append(val)
+        where_clauses: List[str] = []
+        for kcol, kval in key.items():
+            where_clauses.append(f"{kcol} = %s")
+            params.append(kval)
+        sql = f"UPDATE {table} SET " + ", ".join(set_clauses) + " WHERE " + " AND ".join(where_clauses)
+        try:
+            with self._cursor() as cur:
+                cur.execute(sql, params)
+                return cur.rowcount > 0
+        except Exception as e:
+            # For safety, don't leak SQL. Re-raise a sanitized error.
+            raise RuntimeError(f"Failed to modify {table}") from e
 
     # ---- Documents
     def upsert_document(self, doc: Document) -> None:

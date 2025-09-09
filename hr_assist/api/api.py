@@ -10,12 +10,14 @@ from hr_assist.api.model import (
     DocumentDeleteResponse,
     JobUploadRequest,
     JobUploadResponse,
+    JobPatchRequest,
     QuestionnaireResponse,
     JobListResponse,
     JobResponse,
     JobDeleteResponse,
     CandidateUploadRequest,
     CandidateUploadResponse,
+    CandidatePatchRequest,
     CandidateListResponse,
     CandidateResponse,
     CandidateDeleteResponse,
@@ -117,6 +119,23 @@ def delete_job(job_id: str, service: HRService = Depends()):
         raise HTTPException(status_code=404, detail="Job not found")
     return {"message": "Job deleted successfully"}
 
+@app.patch("/jobs/{job_id}", tags=["Jobs"], summary="Patch (partial update) a job", response_model=JobResponse)
+def patch_job(job_id: str, request: JobPatchRequest, service: HRService = Depends()):
+    try:
+        updated = service.patch_job(
+            job_id,
+            company_name=request.company_name,
+            job_title=request.job_title,
+            job_description=request.job_description,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except RuntimeError:
+        raise HTTPException(status_code=500, detail="Failed to update job")
+    if not updated:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return updated
+
 @app.post("/candidates", tags=["Candidates"], summary="Upload a new candidate CV", response_model=CandidateUploadResponse)
 def upload_candidate(request: CandidateUploadRequest, service: HRService = Depends()):
     candidate_id = service.upload_candidate(request.candidate_name, request.candidate_cv_id)
@@ -144,6 +163,22 @@ def delete_candidate(candidate_id: str, service: HRService = Depends()):
     if not success:
         raise HTTPException(status_code=404, detail="Candidate not found")
     return {"message": "Candidate deleted successfully"}
+
+@app.patch("/candidates/{candidate_id}", tags=["Candidates"], summary="Patch (partial update) a candidate", response_model=CandidateResponse)
+def patch_candidate(candidate_id: str, request: CandidatePatchRequest, service: HRService = Depends()):
+    try:
+        updated = service.patch_candidate(
+            candidate_id,
+            candidate_name=request.candidate_name,
+            candidate_cv_id=request.candidate_cv_id,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except RuntimeError:
+        raise HTTPException(status_code=500, detail="Failed to update candidate")
+    if not updated:
+        raise HTTPException(status_code=404, detail="Candidate not found")
+    return updated
 
 @app.post("/candidates/{candidate_id}/score/{job_id}", tags=["Candidates"], summary="Score a candidate against a job", response_model=CandidateScoreResponse)
 def score_candidate(candidate_id: str, job_id: str, service: HRService = Depends()):

@@ -48,6 +48,24 @@ class BaseDb(ABC):
         - columns: subset of columns to return; defaults to all.
         """
 
+    @abstractmethod
+    def modify(
+        self,
+        table: str,
+        key: Dict[str, Any],
+        changes: Dict[str, Any],
+    ) -> bool:
+        """Generic partial update.
+
+        Parameters:
+            table: table name.
+            key: dict mapping primary key column(s) to value(s).
+            changes: dict of columns -> new values (None values are ignored).
+
+        Returns True if a row was updated, False if no matching row.
+        Implementations must validate input and protect against SQL injection.
+        """
+
     # ---- Documents
     @abstractmethod
     def upsert_document(self, doc: Document) -> None:

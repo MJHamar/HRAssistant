@@ -102,6 +102,16 @@ class HRService:
     def delete_job(self, job_id: str) -> bool:
         return self.db.delete_job(job_id)
 
+    def patch_job(self, job_id: str, **fields) -> Optional[Job]:
+        # Use DB generic modify and then fetch
+        changed = {k: v for k, v in fields.items() if v is not None}
+        if not changed:
+            return self.db.get_job(job_id)
+        ok = self.db.modify("jobs", key={"id": job_id}, changes=changed)
+        if not ok:
+            return None
+        return self.db.get_job(job_id)
+
     # ---- Candidates ----
     def upload_candidate(self, candidate_name: str, candidate_cv_id: str) -> str:
         candidate_id = str(uuid4())
@@ -118,18 +128,27 @@ class HRService:
     def delete_candidate(self, candidate_id: str) -> bool:
         return self.db.delete_candidate(candidate_id)
 
+    def patch_candidate(self, candidate_id: str, **fields) -> Optional[Candidate]:
+        changed = {k: v for k, v in fields.items() if v is not None}
+        if not changed:
+            return self.db.get_candidate(candidate_id)
+        ok = self.db.modify("candidates", key={"id": candidate_id}, changes=changed)
+        if not ok:
+            return None
+        return self.db.get_candidate(candidate_id)
+
     def score_candidate(self, candidate_id: str, job_id: str) -> Optional[Dict[str, Any]]:
         cand = self.db.get_candidate(candidate_id)
         job = self.db.get_job(job_id)
         if not cand or not job:
             return None
 
-        # Fetch candidate CV contents
+        # Fetch candidate CV content
         cv_text: Optional[str] = None
         if cand.candidate_cv_id:
             cv_doc = self.db.get_document(cand.candidate_cv_id)
             if cv_doc:
-                cv_text = cv_doc.contents
+                cv_text = cv_doc.content
         if not cv_text:
             # No CV to score
             return None
