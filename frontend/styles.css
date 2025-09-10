@@ -31,15 +31,17 @@ main { padding: 16px; }
 .card-subtitle { color: var(--muted); font-size: 0.9rem; }
 /* Card sections: hide direct child body & footer by default; show only when that specific card is expanded. */
 /* Using child combinators prevents an expanded ancestor from forcing nested cards open. */
-.card > .card-body, .card > .card-footer { display: none; }
-.card > .card-body { padding: 12px; border-top: 1px solid var(--border); }
-.card > .card-footer { gap: 8px; padding: 10px 12px 12px; border-top: 1px solid var(--border); }
-.card.expanded > .card-body { display: block; }
-.card.expanded > .card-footer { display: flex; }
+/* Card content wrapper: hides both body & footer together when collapsed */
+.card-content { display: flex; flex-direction: column; }
+.card > .card-content { display: none; }
+.card.expanded > .card-content { display: flex; }
+.card-content > .card-body { padding: 12px; border-top: 1px solid var(--border); display: block; }
+.card-content > .card-footer { display: flex; gap: 8px; padding: 10px 12px 12px; border-top: 1px solid var(--border); }
 
 button.primary { background: var(--accent); color: white; border: none; padding: 8px 12px; border-radius: 6px; cursor: pointer; }
 button.secondary { background: transparent; color: var(--text); border: 1px solid var(--border); padding: 8px 12px; border-radius: 6px; cursor: pointer; }
 button.link { background: transparent; color: var(--accent); border: none; cursor: pointer; }
+button.danger { background: var(--danger); color: #fff; border: none; padding: 8px 12px; border-radius: 6px; cursor: pointer; }
 
 .muted { color: var(--muted); }
 textarea, input[type="text"], select { width: 100%; background: #0f1116; color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 8px; }

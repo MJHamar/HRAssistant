@@ -81,15 +81,17 @@
             </label>
           </div>
           <div class="field">
-            <label>Description
+            <label>Descriptionaccording to my google chrome.
               <textarea data-f-job-desc rows="6" disabled>${escapeHtml(job.job_description || '')}</textarea>
             </label>
           </div>`;
         footer.innerHTML = `
           <button class="secondary" data-act-edit>Edit</button>
-          <button class="primary" data-act-search>Search</button>`;
+          <button class="primary" data-act-search>Search</button>
+          <button class="danger" data-act-delete>Delete</button>`;
         const btnEdit = footer.querySelector('[data-act-edit]');
         const btnSearch = footer.querySelector('[data-act-search]');
+        const btnDelete = footer.querySelector('[data-act-delete]');
         btnEdit.addEventListener('click', async () => {
           const titleInput = body.querySelector('[data-f-job-title]');
           const companyInput = body.querySelector('[data-f-company-name]');
@@ -109,6 +111,14 @@
         });
         btnSearch.addEventListener('click', async () => {
           await ensureSearchJobs(); searchSelect.value = job.id; updateSearchInfo(job); showPage('search');
+        });
+        btnDelete.addEventListener('click', async () => {
+          if(!confirm('Delete this job?')) return;
+          try {
+            const res = await fetch(`${API_BASE}/jobs/${job.id}`, { method:'DELETE' });
+            if(!res.ok) throw new Error();
+            await loadJobs();
+          } catch { alert('Failed to delete job'); }
         });
       },
       onExpand: () => {},
@@ -179,8 +189,9 @@
           </div>
           <div data-nested-cv></div>
           `;
-        footer.innerHTML = `<button class="secondary" data-act-edit>Edit</button>`;
+        footer.innerHTML = `<button class="secondary" data-act-edit>Edit</button><button class="danger" data-act-delete>Delete</button>`;
         const btnEdit = footer.querySelector('[data-act-edit]');
+        const btnDelete = footer.querySelector('[data-act-delete]');
         const nameInput = body.querySelector('[data-f-cand-name]');
         btnEdit.addEventListener('click', async () => {
           const entering = nameInput.disabled;
@@ -194,6 +205,14 @@
             }
             catch { alert('Failed to save candidate'); }
           }
+        });
+        btnDelete.addEventListener('click', async () => {
+          if(!confirm('Delete this candidate?')) return;
+          try {
+            const res = await fetch(`${API_BASE}/candidates/${c.id}`, { method:'DELETE' });
+            if(!res.ok) throw new Error();
+            await loadCandidates();
+          } catch { alert('Failed to delete candidate'); }
         });
         // Nested CV card
         const nestedMount = body.querySelector('[data-nested-cv]');

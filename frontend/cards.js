@@ -36,6 +36,10 @@ function makeCard({ id, onInit, onExpand, onCollapse, initiallyExpanded = false 
     header.setAttribute('aria-expanded', 'false');
     header.tabIndex = 0;
 
+    // Content wrapper (body + footer)
+    const contentWrap = document.createElement('div');
+    contentWrap.className = 'card-content';
+
     // Body
     const body = document.createElement('div');
     body.className = 'card-body';
@@ -44,10 +48,12 @@ function makeCard({ id, onInit, onExpand, onCollapse, initiallyExpanded = false 
     const footer = document.createElement('div');
     footer.className = 'card-footer';
 
+    contentWrap.appendChild(body);
+    contentWrap.appendChild(footer);
+
     // Compose
     root.appendChild(header);
-    root.appendChild(body);
-    root.appendChild(footer);
+    root.appendChild(contentWrap);
 
     // Internal state
     let didInit = false;
@@ -55,11 +61,11 @@ function makeCard({ id, onInit, onExpand, onCollapse, initiallyExpanded = false 
     // Wire toggle
     const doExpand = () => {
         toggleExpanded(root, true);
-    if (typeof onExpand === 'function') onExpand(id, root);
+        if (typeof onExpand === 'function') onExpand(id, root);
     };
     const doCollapse = () => {
         toggleExpanded(root, false);
-    if (typeof onCollapse === 'function') onCollapse(id, root);
+        if (typeof onCollapse === 'function') onCollapse(id, root);
     };
 
     const onToggle = () => {
