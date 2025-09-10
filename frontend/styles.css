@@ -29,9 +29,13 @@ main { padding: 16px; }
 .card-header { display: flex; justify-content: space-between; align-items: center; padding: 10px 12px; cursor: pointer; }
 .card-title { font-weight: 600; }
 .card-subtitle { color: var(--muted); font-size: 0.9rem; }
-.card-body { display: none; padding: 12px; border-top: 1px solid var(--border); }
-.card.expanded .card-body { display: block; }
-.card-footer { display: flex; gap: 8px; padding-top: 8px; }
+/* Card sections: hide direct child body & footer by default; show only when that specific card is expanded. */
+/* Using child combinators prevents an expanded ancestor from forcing nested cards open. */
+.card > .card-body, .card > .card-footer { display: none; }
+.card > .card-body { padding: 12px; border-top: 1px solid var(--border); }
+.card > .card-footer { gap: 8px; padding: 10px 12px 12px; border-top: 1px solid var(--border); }
+.card.expanded > .card-body { display: block; }
+.card.expanded > .card-footer { display: flex; }
 
 button.primary { background: var(--accent); color: white; border: none; padding: 8px 12px; border-radius: 6px; cursor: pointer; }
 button.secondary { background: transparent; color: var(--text); border: 1px solid var(--border); padding: 8px 12px; border-radius: 6px; cursor: pointer; }
@@ -40,6 +44,13 @@ button.link { background: transparent; color: var(--accent); border: none; curso
 .muted { color: var(--muted); }
 textarea, input[type="text"], select { width: 100%; background: #0f1116; color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 8px; }
 label { display: block; margin-bottom: 8px; }
+
+/* CV Upload (themed) */
+.cv-upload-label { display: flex; align-items: center; gap: 8px; cursor: pointer; border: 1px dashed var(--border); padding: 10px 12px; border-radius: 6px; background: #0f1116; width: 100%; color: var(--muted); font-size: 0.9rem; transition: background .15s, border-color .15s, color .15s; }
+.cv-upload-label:hover { background: #14171d; color: var(--text); }
+.cv-upload-label.dragover { background: #182033; border-color: var(--accent); color: var(--accent); }
+.cv-upload-label input[type="file"] { display: none; }
+.cv-upload-label span { flex: 1; }
 
 /* Modals */
 .modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.5); backdrop-filter: blur(2px); }
