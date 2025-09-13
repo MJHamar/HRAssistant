@@ -1,0 +1,3 @@
+[submodule "hr_assist/ConFit-v2"]
+	path = hr_assist/ConFit-v2
+	url = git@github.com:jasonyux/ConFit-v2.git
