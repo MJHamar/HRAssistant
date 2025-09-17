@@ -5,6 +5,14 @@ from typing import Literal, List
 import dspy 
 import pydantic
 
+class MakeIdealCandidate(dspy.Signature):
+    """
+    Signature for generating an ideal candidate resume for a given job description
+    """
+    example_job: str = dspy.InputField(desc="An example job description")
+    example_resume: str = dspy.InputField(desc="An example resume that matches the example job description")
+    target_job: str = dspy.InputField(desc="The target job description to generate an ideal candidate resume for")
+    ideal_candidate_resume: str = dspy.OutputField(desc="The generated ideal candidate resume that matches the target job description")
 
 class Question(pydantic.BaseModel):
     criterion: str = dspy.OutputField(desc="A single criterion in a questionnaire")
