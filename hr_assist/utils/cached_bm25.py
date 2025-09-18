@@ -2,7 +2,7 @@ from pathlib import Path
 import pickle
 from typing import List
 
-from BM25 import BM25
+from rank_bm25 import BM25Okapi as BM25
 
 class CachedBM25(BM25):
     def __init__(self, cache_path: Path, *args, **kwargs):

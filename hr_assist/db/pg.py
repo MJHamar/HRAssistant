@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import re
+from typing import Literal
 from pathlib import Path
 from contextlib import contextmanager
 from typing import Any, Dict, Iterable, List, Optional, Tuple
@@ -341,6 +342,16 @@ class PostgresDB(BaseDb):
                 """,
                 [table, record_id, embedding, self._Jsonb(metadata) if metadata is not None else None],
             )
+            
+    def _get_embedding_op(self, metric: Literal["cosine", "euclidean", "inner_product"]) -> str:
+        if metric == "cosine":
+            return "<=>"
+        elif metric == "euclidean":
+            return "<->"
+        elif metric == "inner_product":
+            return "<#>"
+        else:
+            raise ValueError(f"Unsupported similarity metric: {metric}")
 
     def vector_search(
         self,
@@ -348,9 +359,9 @@ class PostgresDB(BaseDb):
         query_embedding: List[float],
         top_k: int = 5,
         filters: Optional[Dict[str, Any]] = None,
-        metric: str = "cosine",
+        metric: Literal["cosine", "euclidean", "inner_product"] = "cosine",
     ) -> List[Tuple[str, float]]:
-        op = "<=>" if metric == "cosine" else "<->"  # default to euclidean if not cosine
+        op = self._get_embedding_op(metric)
         sql = [
             "SELECT record_id, 1 - (embedding %s %s) AS score FROM embeddings WHERE table_name = %s"
             % (op, "%s")

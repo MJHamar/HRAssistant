@@ -14,7 +14,7 @@ def configure_dspy(provider: str = 'gemini', model: str = 'gemini-2.5-flash', ap
     dspy.configure(lm=lm)
     return lm
 
-class HrAssistant(dspy.Module):
+class HrAssistantLM(dspy.Module):
     """
     DSPy Module defining all the prompting classes that the HRManager supports
     """
@@ -78,7 +78,7 @@ class HrAssistant(dspy.Module):
     # interface methods
     # _____________________________________________
     
-    def make_resume(self, target_job: str, examples: List[dspy.Example] = []) -> str:
+    def generate_resume(self, target_job: str, examples: List[dspy.Example] = []) -> str:
         """
         Generate an ideal candidate resume for a given job description
         """
@@ -86,7 +86,7 @@ class HrAssistant(dspy.Module):
         result = prompter(target_job=target_job)
         return result.ideal_candidate_resume
     
-    def make_questionnaire(self, job_description: str, examples: List[dspy.Example] = []) -> List[Dict[str, Any]]:
+    def generate_questionnaire(self, job_description: str, examples: List[dspy.Example] = []) -> List[Dict[str, Any]]:
         """
         Generate a questionnaire based on job description
         """
@@ -94,7 +94,7 @@ class HrAssistant(dspy.Module):
         result = prompter(job_description=job_description)
         return [q.dict() for q in result.criteria]
     
-    def score_candidate(self, candidate_cv: str, questionnaire: List[Dict[str, Any]], examples: List[dspy.Example] = []) -> List[float]:
+    def generate_candidate_scores(self, candidate_cv: str, questionnaire: List[Dict[str, Any]], examples: List[dspy.Example] = []) -> List[float]:
         """
         Score a candidate based on their CV and a questionnaire
         """
@@ -104,5 +104,5 @@ class HrAssistant(dspy.Module):
 
 __all__ = [
     "configure_dspy",
-    "HrAssistant",
+    "HrAssistantLM",
 ]
