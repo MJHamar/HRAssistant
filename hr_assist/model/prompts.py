@@ -30,6 +30,7 @@ class ScoreCandidate(dspy.Signature):
     Signature for scoring a candidate based on their CV and a questionnaire
     """
     candidate_cv: str = dspy.InputField(desc="The CV of the candidate to be scored")
-    questionnaire: List[Question] = dspy.InputField(desc="The questionnaire to score the candidate against")
-    scores: List[float] = dspy.OutputField(desc="List of scores for each question in the questionnaire")
+    criteria: List[str] = dspy.InputField(desc="List of criteria to score the candidate on, based on the availalbe information in the CV")
+    scores: List[Literal["low", "medium", "high"]] = dspy.OutputField(desc="List of scores for each criterion, in the same order as the criteria")
+    # TODO: might need explicit indexing to make it more stable
 

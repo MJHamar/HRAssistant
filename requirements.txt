@@ -7,3 +7,6 @@ pytest
 
 python-multipart
 uvicorn
+rank_bm25
+torch
+transformers

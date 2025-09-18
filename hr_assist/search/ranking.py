@@ -1,4 +1,5 @@
 import abc
+from concurrent.futures import ProcessPoolExecutor
 from typing import Callable, Literal, Optional, Dict, Any, List
 
 from pathlib import Path
@@ -6,6 +7,7 @@ from pathlib import Path
 from ..db import PostgresDB
 from ..utils import CachedBM25
 from ..model.embed import PreTrainedEmbedder
+from ..model.prompts import Question
 
 class BaseRanker(abc.ABC):
     @abc.abstractmethod
@@ -125,3 +127,54 @@ class HybridRanker(BaseRanker):
             self.pg_ranker.add_document(document_ids[i], doc, None)
 
 # TODO: rerankers
+class BaseReranker(abc.ABC):
+    @abc.abstractmethod
+    def rerank(self, query: str, documents: List[str], top_k: int = -1) -> list:
+        pass
+
+class ScoringReranker(BaseReranker):
+    def __init__(self, scoring_fn: Callable[[str, str], float],
+                 parallelize: bool = False):
+        self.scoring_fn = scoring_fn
+        self.parallelize = parallelize
+
+    def rerank(self, query: str, documents: List[str], top_k: int = -1) -> list:
+        if self.parallelize:
+            with ProcessPoolExecutor() as executor:
+                scores = list(executor.map(lambda doc: (doc, self.scoring_fn(query, doc)), documents))
+        else:
+            scores = [(doc, self.scoring_fn(query, doc)) for doc in documents]
+        ranked_docs = sorted(scores, key=lambda x: x[1], reverse=True)[:top_k]
+        return ranked_docs
+
+class QuestionnaireScorer(Callable):
+    def __init__(
+        self,
+        questionnaire: List[Question],
+        scoring_fn: Callable[[str, List[str]], float],
+        score_weight_map: Dict[str, float],
+        score_value_map: Dict[str, float],
+    ):
+        self.questionnaire = questionnaire
+        self.scoring_fn = scoring_fn
+        self.score_weight_map = score_weight_map
+        self.score_value_map = score_value_map
+
+    def __call__(self, query: str, document: str) -> float:
+        """
+        Scores a document based on the questionnaire.
+        query is ignored.
+        document is what is compared agains the questionnaire.
+        """
+        total_score = 0.0
+        total_weight = 0.0
+        scores = self.scoring_fn(document, [q.criterion for q in self.questionnaire])
+        for question, score in zip(self.questionnaire, scores):
+            weight = self.score_weight_map.get(question.importance, 1.0)
+            value = self.score_value_map.get(score, 0.0)
+            total_score += weight * value
+            total_weight += weight
+        
+        if total_weight == 0:
+            return 0.0
+        return total_score / total_weight
