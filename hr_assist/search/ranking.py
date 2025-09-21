@@ -1,6 +1,7 @@
 import abc
 from concurrent.futures import ProcessPoolExecutor
-from typing import Callable, Literal, Optional, Dict, Any, List
+from typing import Callable, Literal, Optional, Dict, Any, List, Tuple
+from pydantic import BaseModel
 
 from pathlib import Path
 
@@ -29,6 +30,7 @@ class PgRanker(BaseRanker):
                  table: str,
                  similarity_metric: Literal["cosine", "euclidean", "inner_product"] = "cosine"):
         self.db = db
+        self.embedding_fn = embedding_fn
         self.table = table
         self.similarity_metric = similarity_metric
         if similarity_metric not in ["cosine", "euclidean", "inner_product"]:
@@ -37,13 +39,13 @@ class PgRanker(BaseRanker):
     def rank(self, query: str, top_k: int = 5) -> list:
         query_embedding = self.embedding_fn(query).detach().cpu().numpy().tolist()
         
-        results = self.db.vector_search(
+        results: Tuple[BaseModel, float] = self.db.vector_search(
             table=self.table,
             query_embedding=query_embedding,
             top_k=top_k,
             metric=self.similarity_metric
         )
-        return results
+        return [r[0] for r in results]
     
     def add_document(self, document_id: str, document: str, metadata: Optional[Dict[str, Any]] = None) -> None:
         embedding = self.embedding_fn(document).detach().cpu().numpy().tolist()

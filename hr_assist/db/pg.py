@@ -15,6 +15,15 @@ def _as_array(val: Optional[List[Any]]) -> Optional[List[Any]]:
     return None if val is None else list(val)
 
 
+TABLE_MODEL_MAP = {
+    "documents": Document,
+    "document_chunks": DocumentChunk,
+    "jobs": Job,
+    "candidates": Candidate,
+    "questionnaires": Questionnaire,
+    "candidate_fitness": CandidateFitness,
+}
+
 class PostgresDB(BaseDb):
     def __init__(
         self,
@@ -377,7 +386,16 @@ class PostgresDB(BaseDb):
         with self._cursor() as cur:
             cur.execute(query_str, params)
             rows = cur.fetchall() or []
-        return [(r["record_id"], float(r["score"])) for r in rows]
+        
+        # retrieve the actual records from the target table
+        retlist = []
+        constructor = TABLE_MODEL_MAP.get(table, dict)
+        cur.execute(f"SELECT * FROM {table} WHERE id IN %s", ([r["record_id"] for r in rows],))
+        for record in cur.fetchall() or []:
+            rec_obj = constructor(**record) if constructor != dict else record
+            score = next((r["score"] for r in rows if r["record_id"] == record["id"]), None)
+            retlist.append((rec_obj, score))
 
+        return retlist
 
 __all__ = ["PostgresDB"]
