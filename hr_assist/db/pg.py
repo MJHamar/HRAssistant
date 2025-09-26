@@ -1,4 +1,3 @@
-from __future__ import annotations
 
 import os
 import re
@@ -72,7 +71,7 @@ class PostgresDB(BaseDb):
     def _cursor(self):
         with self._conn.cursor() as cur:
             yield cur
-    
+
     # ---- Generic query
     def query(
         self,
@@ -351,7 +350,7 @@ class PostgresDB(BaseDb):
                 """,
                 [table, record_id, embedding, self._Jsonb(metadata) if metadata is not None else None],
             )
-            
+
     def _get_embedding_op(self, metric: Literal["cosine", "euclidean", "inner_product"]) -> str:
         if metric == "cosine":
             return "<=>"
@@ -386,7 +385,7 @@ class PostgresDB(BaseDb):
         with self._cursor() as cur:
             cur.execute(query_str, params)
             rows = cur.fetchall() or []
-        
+
         # retrieve the actual records from the target table
         retlist = []
         constructor = TABLE_MODEL_MAP.get(table, dict)

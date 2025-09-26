@@ -14,16 +14,16 @@ class BaseRanker(abc.ABC):
     @abc.abstractmethod
     def rank(self, query: str, top_k: int = 5) -> list:
         pass
-    
+
     @abc.abstractmethod
     def add_document(self, document_id: str, document: str) -> None:
         pass
-    
+
     def add_documents(self, document_ids: List[str], documents: List[str]) -> None:
         for doc_id, doc in zip(document_ids, documents):
             self.add_document(doc_id, doc)
 
-class PgRanker(BaseRanker):
+class   PgRanker(BaseRanker):
     def __init__(self,
                  db: PostgresDB,
                  embedding_fn: PreTrainedEmbedder,
@@ -35,10 +35,10 @@ class PgRanker(BaseRanker):
         self.similarity_metric = similarity_metric
         if similarity_metric not in ["cosine", "euclidean", "inner_product"]:
             raise ValueError(f"Unsupported similarity metric: {similarity_metric}")
-        
+
     def rank(self, query: str, top_k: int = 5) -> list:
         query_embedding = self.embedding_fn(query).detach().cpu().numpy().tolist()
-        
+
         results: Tuple[BaseModel, float] = self.db.vector_search(
             table=self.table,
             query_embedding=query_embedding,
@@ -46,7 +46,7 @@ class PgRanker(BaseRanker):
             metric=self.similarity_metric
         )
         return [r[0] for r in results]
-    
+
     def add_document(self, document_id: str, document: str, metadata: Optional[Dict[str, Any]] = None) -> None:
         embedding = self.embedding_fn(document).detach().cpu().numpy().tolist()
         self.db.upsert_embedding(
@@ -75,17 +75,17 @@ class BM25Ranker(BaseRanker):
                 tokenized_corpus = [self._tokenize(doc) for doc in corpus]
                 bm25_instance = CachedBM25(Path(bm25_cache_path), tokenized_corpus)
         self.bm25 = bm25_instance
-    
+
     def _tokenize(self, text: str) -> list[str]:
         return text.split()  # TODO: add tokenizer
 
     def rank(self, query: str, top_k: int = 5) -> list:
         results = self.bm25.get_scores(self._tokenize(query))
         return results
-    
+
     def add_document(self, document_id: str, document: str) -> None:
         return self.add_documents([document_id], [document])
-    
+
     def add_documents(self, document_ids: List[str], documents: List[str]) -> None:
         self._adder(documents)
         new_corpus = self._loader()
@@ -103,26 +103,26 @@ class HybridRanker(BaseRanker):
         self.pg_ranker = pg_ranker
         self.bm25_ranker = bm25_ranker
         self.alpha = alpha
-    
+
     def rank(self, query: str, top_k: int = 5) -> list:
         pg_results = self.pg_ranker.rank(query, top_k=top_k*2)  # get more results to merge
         bm25_results = self.bm25_ranker.rank(query, top_k=top_k*2)
-        
+
         # Merge results based on scores
         combined_scores = {}
         for doc_id, score in pg_results:
             combined_scores[doc_id] = combined_scores.get(doc_id, 0) + self.alpha * score
         for doc_id, score in bm25_results:
             combined_scores[doc_id] = combined_scores.get(doc_id, 0) + (1 - self.alpha) * score
-        
+
         # Sort and return top_k
         ranked_docs = sorted(combined_scores.items(), key=lambda x: x[1], reverse=True)[:top_k]
         return ranked_docs
-    
+
     def add_document(self, document_id: str, document: str, metadata: Optional[Dict[str, Any]] = None) -> None:
         self.pg_ranker.add_document(document_id, document, metadata)
         self.bm25_ranker.add_document(document)
-    
+
     def add_documents(self, document_ids: List[str], documents: List[str]) -> None:
         self.bm25_ranker.add_documents(documents)
         for i, doc in enumerate(documents):
@@ -176,7 +176,7 @@ class QuestionnaireScorer(Callable):
             value = self.score_value_map.get(score, 0.0)
             total_score += weight * value
             total_weight += weight
-        
+
         if total_weight == 0:
             return 0.0
         return total_score / total_weight
