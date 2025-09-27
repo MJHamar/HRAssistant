@@ -23,7 +23,7 @@ class BaseRanker(abc.ABC):
         for doc_id, doc in zip(document_ids, documents):
             self.add_document(doc_id, doc)
 
-class   PgRanker(BaseRanker):
+class PgRanker(BaseRanker):
     def __init__(self,
                  db: PostgresDB,
                  embedding_fn: PreTrainedEmbedder,
@@ -36,16 +36,16 @@ class   PgRanker(BaseRanker):
         if similarity_metric not in ["cosine", "euclidean", "inner_product"]:
             raise ValueError(f"Unsupported similarity metric: {similarity_metric}")
 
-    def rank(self, query: str, top_k: int = 5) -> list:
+    def rank(self, query: str, top_k: int = 5) -> List[Tuple[BaseModel, float]]:
         query_embedding = self.embedding_fn(query).detach().cpu().numpy().tolist()
 
-        results: Tuple[BaseModel, float] = self.db.vector_search(
+        results: List[Tuple[BaseModel, float]] = self.db.vector_search(
             table=self.table,
             query_embedding=query_embedding,
             top_k=top_k,
             metric=self.similarity_metric
         )
-        return [r[0] for r in results]
+        return results
 
     def add_document(self, document_id: str, document: str, metadata: Optional[Dict[str, Any]] = None) -> None:
         embedding = self.embedding_fn(document).detach().cpu().numpy().tolist()

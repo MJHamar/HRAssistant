@@ -8,6 +8,7 @@ from .model import (
     CandidateFitness,
     Document,
     Job,
+    JobCandidateScore,
     JobIdealCandidate,
     Questionnaire,
 )
@@ -150,6 +151,30 @@ class BaseDb(ABC):
     ) -> List[Questionnaire]:
         pass
 
+    # ---- Job Candidate Scores
+    @abstractmethod
+    def upsert_job_candidate_score(self, score: JobCandidateScore) -> None:
+        pass
+
+    @abstractmethod
+    def get_job_candidate_score(self, job_id: str, candidate_id: str) -> Optional[JobCandidateScore]:
+        pass
+
+    @abstractmethod
+    def list_job_candidate_scores(
+        self, job_id: str, limit: Optional[int] = None, offset: int = 0
+    ) -> List[JobCandidateScore]:
+        pass
+
+    @abstractmethod
+    def delete_job_candidate_scores(self, job_id: str) -> int:
+        """
+        Delete all candidate scores for a specific job.
+
+        Returns:
+            Number of rows deleted
+        """
+
     # ---- Candidate Fitness
     @abstractmethod
     def upsert_candidate_fitness(self, fitness: CandidateFitness) -> None:
@@ -184,6 +209,57 @@ class BaseDb(ABC):
         """
         Return a list of (record_id, score), higher score means more similar for cosine.
         Implementations may use pgvector, external vector DBs, or in-memory fallback.
+        """
+
+    # ---- Batch operations
+    @abstractmethod
+    def batch_upsert(
+        self,
+        table: str,
+        records: List[Dict[str, Any]],
+        conflict_columns: Optional[List[str]] = None
+    ) -> None:
+        """
+        Batch insert/update records into a table.
+
+        Parameters:
+            table: table name
+            records: list of record dictionaries
+            conflict_columns: columns to use for conflict resolution (ON CONFLICT)
+        """
+
+    @abstractmethod
+    def batch_modify(
+        self,
+        table: str,
+        updates: List[Tuple[Dict[str, Any], Dict[str, Any]]]
+    ) -> int:
+        """
+        Batch modify records in a table.
+
+        Parameters:
+            table: table name
+            updates: list of (key_dict, changes_dict) tuples
+
+        Returns:
+            Number of rows updated
+        """
+
+    @abstractmethod
+    def batch_delete(
+        self,
+        table: str,
+        keys: List[Dict[str, Any]]
+    ) -> int:
+        """
+        Batch delete records from a table.
+
+        Parameters:
+            table: table name
+            keys: list of key dictionaries identifying records to delete
+
+        Returns:
+            Number of rows deleted
         """
 
 

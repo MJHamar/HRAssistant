@@ -53,6 +53,13 @@ class Questionnaire(BaseModel):
     job_id: str
     questionnaire: List[QuestionnaireItem]
 
+class JobCandidateScore(BaseModel):
+    __tablename__ = "job_candidate_scores"
+    __primary_key__ = ("job_id", "candidate_id")
+    job_id: str
+    candidate_id: str
+    score: float
+
 class CandidateFitness(BaseModel):
     __tablename__ = "candidate_fitness"
     __primary_key__ = ("candidate_id", "job_id", "questionnaire_id")

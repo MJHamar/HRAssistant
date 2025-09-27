@@ -7,7 +7,7 @@ from contextlib import contextmanager
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from .base import BaseDb
-from .model import Candidate, CandidateFitness, Document, DocumentChunk, Job, JobIdealCandidate, Questionnaire, QuestionnaireItem
+from .model import Candidate, CandidateFitness, Document, DocumentChunk, Job, JobCandidateScore, JobIdealCandidate, Questionnaire, QuestionnaireItem
 
 
 def _as_array(val: Optional[List[Any]]) -> Optional[List[Any]]:
@@ -19,6 +19,7 @@ TABLE_MODEL_MAP = {
     "document_chunks": DocumentChunk,
     "jobs": Job,
     "job_ideal_candidates": JobIdealCandidate,
+    "job_candidate_scores": JobCandidateScore,
     "candidates": Candidate,
     "questionnaires": Questionnaire,
     "candidate_fitness": CandidateFitness,
@@ -335,6 +336,45 @@ class PostgresDB(BaseDb):
             items.append(Questionnaire(job_id=r["job_id"], questionnaire=q_items))
         return items
 
+    # ---- Job Candidate Scores
+    def upsert_job_candidate_score(self, score: JobCandidateScore) -> None:
+        with self._cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO job_candidate_scores (job_id, candidate_id, score)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (job_id, candidate_id) DO UPDATE SET
+                    score = EXCLUDED.score
+                """,
+                [score.job_id, score.candidate_id, score.score],
+            )
+
+    def get_job_candidate_score(self, job_id: str, candidate_id: str) -> Optional[JobCandidateScore]:
+        with self._cursor() as cur:
+            cur.execute(
+                "SELECT * FROM job_candidate_scores WHERE job_id = %s AND candidate_id = %s",
+                [job_id, candidate_id]
+            )
+            row = cur.fetchone()
+        return JobCandidateScore(**row) if row else None
+
+    def list_job_candidate_scores(
+        self, job_id: str, limit: Optional[int] = None, offset: int = 0
+    ) -> List[JobCandidateScore]:
+        rows = self.query(
+            "job_candidate_scores",
+            filters={"job_id": job_id},
+            limit=limit,
+            offset=offset,
+            order_by=["-score"]  # Order by score descending (highest first)
+        )
+        return [JobCandidateScore(**r) for r in rows]
+
+    def delete_job_candidate_scores(self, job_id: str) -> int:
+        with self._cursor() as cur:
+            cur.execute("DELETE FROM job_candidate_scores WHERE job_id = %s", [job_id])
+            return cur.rowcount
+
     # ---- Candidate Fitness
     def upsert_candidate_fitness(self, fitness: CandidateFitness) -> None:
         with self._cursor() as cur:
@@ -424,5 +464,110 @@ class PostgresDB(BaseDb):
             retlist.append((rec_obj, score))
 
         return retlist
+
+    # ---- Batch operations
+    def batch_upsert(
+        self,
+        table: str,
+        records: List[Dict[str, Any]],
+        conflict_columns: Optional[List[str]] = None
+    ) -> None:
+        if not records:
+            return
+
+        def _is_safe_ident(s: str) -> bool:
+            return bool(re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", s or ""))
+
+        if not _is_safe_ident(table):
+            raise ValueError("invalid table name")
+
+        # Get column names from first record
+        columns = list(records[0].keys())
+        for col in columns:
+            if not _is_safe_ident(col):
+                raise ValueError(f"invalid column name: {col}")
+
+        # Prepare SQL
+        placeholders = ", ".join(["%s"] * len(columns))
+        columns_str = ", ".join(columns)
+
+        if conflict_columns:
+            for col in conflict_columns:
+                if not _is_safe_ident(col):
+                    raise ValueError(f"invalid conflict column name: {col}")
+            conflict_str = ", ".join(conflict_columns)
+            update_clauses = ", ".join([f"{col} = EXCLUDED.{col}" for col in columns if col not in conflict_columns])
+            sql = f"""
+                INSERT INTO {table} ({columns_str})
+                VALUES ({placeholders})
+                ON CONFLICT ({conflict_str}) DO UPDATE SET {update_clauses}
+            """
+        else:
+            sql = f"INSERT INTO {table} ({columns_str}) VALUES ({placeholders})"
+
+        # Execute batch
+        with self._cursor() as cur:
+            for record in records:
+                values = []
+                for col in columns:
+                    val = record[col]
+                    if isinstance(val, (dict, list)):
+                        values.append(self._Jsonb(val))
+                    else:
+                        values.append(val)
+                cur.execute(sql, values)
+
+    def batch_modify(
+        self,
+        table: str,
+        updates: List[Tuple[Dict[str, Any], Dict[str, Any]]]
+    ) -> int:
+        if not updates:
+            return 0
+
+        total_updated = 0
+        for key, changes in updates:
+            if self.modify(table, key, changes):
+                total_updated += 1
+        return total_updated
+
+    def batch_delete(
+        self,
+        table: str,
+        keys: List[Dict[str, Any]]
+    ) -> int:
+        if not keys:
+            return 0
+
+        def _is_safe_ident(s: str) -> bool:
+            return bool(re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", s or ""))
+
+        if not _is_safe_ident(table):
+            raise ValueError("invalid table name")
+
+        total_deleted = 0
+
+        with self._cursor() as cur:
+            for key in keys:
+                if not isinstance(key, dict) or not key:
+                    continue
+
+                # Validate column names
+                for col in key.keys():
+                    if not _is_safe_ident(col):
+                        raise ValueError(f"invalid column name: {col}")
+
+                # Build WHERE clause
+                where_clauses = []
+                params = []
+                for kcol, kval in key.items():
+                    where_clauses.append(f"{kcol} = %s")
+                    params.append(kval)
+
+                sql = f"DELETE FROM {table} WHERE " + " AND ".join(where_clauses)
+                cur.execute(sql, params)
+                total_deleted += cur.rowcount
+
+        return total_deleted
 
 __all__ = ["PostgresDB"]

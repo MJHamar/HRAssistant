@@ -1,4 +1,4 @@
-from typing import Optional, List, Dict, Type
+from typing import Optional, List, Dict, Type, Tuple
 
 from dspy import Module, Example
 from dspy.teleprompt import BootstrapFewShot, LabeledFewShot
@@ -6,7 +6,7 @@ from dspy.teleprompt import BootstrapFewShot, LabeledFewShot
 from ..db.base import BaseDb
 from ..db.model import (
     Document, Job, Candidate, Questionnaire, QuestionnaireItem,
-    CandidateFitness, JobIdealCandidate)
+    CandidateFitness, JobCandidateScore, JobIdealCandidate)
 from ..model.prompts import Question, MakeQuestionnaire, ScoreCandidate, IdealResumeSignature
 from .ranking import BaseRanker, BaseReranker, ScoringReranker, PgRanker
 from ..model.embed import PreTrainedEmbedder
@@ -46,25 +46,80 @@ class HRSearchPipeline:
         self._rank_k = rank_k
 
         # Derived attributes
+        self._questionnaire = self._init_questionnaire()
+        self._ideal_candidate = self._init_ideal_candidate()
+        self._candidates, self._candidate_scores = self._init_candidates_scores()
+        self._candidate_fitness = self._init_candidate_fitness()
+
+    def _init_questionnaire(self):
         questionnaire = self._db.query(
-            Questionnaire.__tablename__, {"job_id": job.id}
+            Questionnaire.__tablename__, {"job_id": self._job.id}
         )
-        self._questionnaire = questionnaire[0] if len(questionnaire) else Questionnaire(
-            job_id=job.id,
+        if len(questionnaire) != 0:
+            questionnaire = questionnaire[0]
+        else:
+            questionnaire = Questionnaire(
+            job_id=self._job.id,
             questionnaire=[]
+            )
+            self.db.modify(
+            table=Questionnaire.__tablename__,
+            key=questionnaire.job_id,
+            changes=dict(**questionnaire.model_dump())
+            )
+        return questionnaire
+
+    def _init_ideal_candidate(self):
+        ideal_candidate = self._db.query(
+            JobIdealCandidate.__tablename__, {"job_id": self._job.id}
         )
-        self._ideal_candidate = None
-        self._candidates = None # top-k documents from the ranker
-        self._candidate_fitness = None # fitness scores from the reranker
+        if len(ideal_candidate) != 0:
+            ideal_candidate = ideal_candidate[0]
+        else:
+            ideal_candidate = JobIdealCandidate(
+                job_id=self._job.id,
+                ideal_candidate_resume=""
+            )
+            self.db.upsert_ideal_candidate(
+                ideal_candidate=ideal_candidate
+            )
+        return ideal_candidate
+
+    def _init_candidates_scores(self):
+        # Initialize candidates from retrieval scores
+        candidate_scores = self._db.list_job_candidate_scores(self._job.id)
+        if candidate_scores:
+            # Get the actual candidate objects from the scores
+            candidate_ids = [score.candidate_id for score in candidate_scores]
+            candidates = []
+            for candidate_id in candidate_ids:
+                candidate = self._db.get_candidate(candidate_id)
+                if candidate:
+                    candidates.append(candidate)
+            candidate_scores = candidate_scores
+        else:
+            candidates = []
+            candidate_scores = []
+        return candidates, candidate_scores
+
+    def _init_candidate_fitness(self):
+        # Initialize candidate fitness scores
+        candidate_fitness = self._db.query(
+            CandidateFitness.__tablename__, {"job_id": self._job.id}
+        )
+        if len(candidate_fitness) != 0:
+            candidate_fitness = candidate_fitness
+        else:
+            candidate_fitness = []
+        return candidate_fitness
 
     @property
     def db(self) -> BaseDb:
         return self._db
 
     @property
-    def ranker(self) -> Optional[BaseRanker]:
-        if self._ranker_cls is None:
-            return None
+    def ranker(self) -> BaseRanker:
+        assert self._ranker_cls is not None, "Ranker class is not specified."
         return self._ranker_cls(
             db=self._db,
             embedding_fn=self._embedder,
@@ -212,4 +267,115 @@ class HRSearchPipeline:
         return self._ideal_candidate
 
     def set_ideal_candidate(self, ideal_candidate: str) -> None:
+        assert ideal_candidate is not None and len(ideal_candidate) > 0, "Ideal candidate resume cannot be empty."
         self._ideal_candidate = ideal_candidate
+        self.db.modify(
+            table=JobIdealCandidate.__tablename__,
+            key=self._job.id,
+            changes=dict(**self._ideal_candidate.model_dump())
+        )
+
+    def delete_ideal_candidate(self) -> None:
+        self._ideal_candidate = self._init_ideal_candidate()
+        self.db.delete(
+            table=JobIdealCandidate.__tablename__,
+            key=self._job.id
+        )
+
+    def rank_candidates(self, top_k: Optional[int] = None) -> List[Candidate]:
+        ranked_docs = self.ranker.rank(
+            query=self._job.job_description,
+            top_k=top_k or self._rank_k
+        )
+        ranked_candidates = []
+        for doc, score in ranked_docs:
+            # retrieve the corresponding candidate
+            candidate = self.db.query(
+                table=Candidate.__tablename__,
+                filters={"candidate_cv_id": doc.id},
+                limit=1,
+            )
+            assert len(candidate) == 1, f"Expected exactly one candidate for document id {doc.id}, got {len(candidate)}"
+            candidate = candidate[0]
+            ranked_candidates.append((candidate, score))
+
+        # remove all existing candidate scores for this job
+        _ = self.db.delete_job_candidate_scores(self._job.id)
+        # TODO: log
+
+        # add the new scores
+        new_scores = [
+            JobCandidateScore(
+                job_id=self._job.id,
+                candidate_id=candidate.id,
+                score=score
+            )
+            for candidate, score in ranked_candidates
+        ]
+        self.update_candidate_scores(new_scores)
+
+        return [rc[0] for rc in ranked_candidates]
+
+
+    @property
+    def candidate_scores(self) -> List[JobCandidateScore]:
+        """Get the current candidate scores for this job."""
+        return self._candidate_scores
+
+    def update_candidate_scores(self, scores: List[JobCandidateScore]) -> None:
+        """Update candidate scores in the database and internal state."""
+        self._db.batch_upsert(
+            table=JobCandidateScore.__tablename__,
+            records=[score.model_dump() for score in scores],
+            conflict_columns=["job_id", "candidate_id"]
+        )
+        self._candidate_scores = scores
+
+    def add_candidate_score(self, candidate_id: str, score: float) -> None:
+        """Add or update a single candidate score."""
+        job_score = JobCandidateScore(
+            job_id=self._job.id,
+            candidate_id=candidate_id,
+            score=score
+        )
+        self._db.upsert_job_candidate_score(job_score)
+
+        # Update internal state
+        existing_idx = None
+        for i, existing_score in enumerate(self._candidate_scores):
+            if existing_score.candidate_id == candidate_id:
+                existing_idx = i
+                break
+
+        if existing_idx is not None:
+            self._candidate_scores[existing_idx] = job_score
+        else:
+            self._candidate_scores.append(job_score)
+
+        # Re-sort by score descending
+        self._candidate_scores.sort(key=lambda x: x.score, reverse=True)
+
+    def delete_candidate_score(self, candidate_id: str) -> None:
+        """Delete a candidate score."""
+        self._db.delete_job_candidate_score(self._job.id, candidate_id)
+
+        # Update internal state
+        self._candidate_scores = [
+            score for score in self._candidate_scores
+            if score.candidate_id != candidate_id
+        ]
+
+    def generate_scores(self, candidate_ids: Optional[List[str]] = None) -> None:
+        """
+        Generate scores for candidates based on the questionnaire.
+
+        If candidate_ids is None, score all candidates with existing scores.
+        """
+        if self._questionnaire is None or len(self._questionnaire.questionnaire) == 0:
+            raise ValueError("Questionnaire is not set or empty. Cannot generate scores.")
+
+        if candidate_ids is None:
+            candidate_ids = [score.candidate_id for score in self._candidate_scores]
+
+        assert len(candidate_ids) > 0, "No candidates to score."
+        # TODO: finish
