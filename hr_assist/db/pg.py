@@ -7,7 +7,7 @@ from contextlib import contextmanager
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from .base import BaseDb
-from .model import Candidate, CandidateFitness, Document, DocumentChunk, Job, Questionnaire, QuestionnaireItem
+from .model import Candidate, CandidateFitness, Document, DocumentChunk, Job, JobIdealCandidate, Questionnaire, QuestionnaireItem
 
 
 def _as_array(val: Optional[List[Any]]) -> Optional[List[Any]]:
@@ -18,6 +18,7 @@ TABLE_MODEL_MAP = {
     "documents": Document,
     "document_chunks": DocumentChunk,
     "jobs": Job,
+    "job_ideal_candidates": JobIdealCandidate,
     "candidates": Candidate,
     "questionnaires": Questionnaire,
     "candidate_fitness": CandidateFitness,
@@ -243,6 +244,34 @@ class PostgresDB(BaseDb):
             cur.execute("DELETE FROM jobs WHERE id = %s", [job_id])
             return cur.rowcount > 0
 
+    # ---- Job Ideal Candidates
+    def upsert_job_ideal_candidate(self, ideal_candidate: JobIdealCandidate) -> None:
+        with self._cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO job_ideal_candidates (job_id, ideal_candidate_resume)
+                VALUES (%s, %s)
+                ON CONFLICT (job_id) DO UPDATE SET
+                    ideal_candidate_resume = EXCLUDED.ideal_candidate_resume
+                """,
+                [ideal_candidate.job_id, ideal_candidate.ideal_candidate_resume],
+            )
+
+    def get_job_ideal_candidate(self, job_id: str) -> Optional[JobIdealCandidate]:
+        with self._cursor() as cur:
+            cur.execute("SELECT * FROM job_ideal_candidates WHERE job_id = %s", [job_id])
+            row = cur.fetchone()
+        return JobIdealCandidate(**row) if row else None
+
+    def list_job_ideal_candidates(self, limit: Optional[int] = None, offset: int = 0) -> List[JobIdealCandidate]:
+        rows = self.query("job_ideal_candidates", limit=limit, offset=offset, order_by=["job_id"])
+        return [JobIdealCandidate(**r) for r in rows]
+
+    def delete_job_ideal_candidate(self, job_id: str) -> bool:
+        with self._cursor() as cur:
+            cur.execute("DELETE FROM job_ideal_candidates WHERE job_id = %s", [job_id])
+            return cur.rowcount > 0
+
     # ---- Candidates
     def upsert_candidate(self, candidate: Candidate) -> None:
         with self._cursor() as cur:
@@ -278,33 +307,32 @@ class PostgresDB(BaseDb):
         with self._cursor() as cur:
             cur.execute(
                 """
-                INSERT INTO questionnaires (id, job_id, questionnaire)
-                VALUES (%s, %s, %s)
-                ON CONFLICT (id) DO UPDATE SET
-                    job_id = EXCLUDED.job_id,
+                INSERT INTO questionnaires (job_id, questionnaire)
+                VALUES (%s, %s)
+                ON CONFLICT (job_id) DO UPDATE SET
                     questionnaire = EXCLUDED.questionnaire
                 """,
-                [questionnaire.id, questionnaire.job_id, self._Jsonb(payload)],
+                [questionnaire.job_id, self._Jsonb(payload)],
             )
 
-    def get_questionnaire(self, questionnaire_id: str) -> Optional[Questionnaire]:
+    def get_questionnaire(self, job_id: str) -> Optional[Questionnaire]:
         with self._cursor() as cur:
-            cur.execute("SELECT * FROM questionnaires WHERE id = %s", [questionnaire_id])
+            cur.execute("SELECT * FROM questionnaires WHERE job_id = %s", [job_id])
             row = cur.fetchone()
         if not row:
             return None
         q_items = [QuestionnaireItem(**qi) for qi in (row["questionnaire"] or {}).get("questionnaire", [])]
-        return Questionnaire(id=row["id"], job_id=row["job_id"], questionnaire=q_items)
+        return Questionnaire(job_id=row["job_id"], questionnaire=q_items)
 
     def list_questionnaires(
         self, job_id: Optional[str] = None, limit: Optional[int] = None, offset: int = 0
     ) -> List[Questionnaire]:
         filters = {"job_id": job_id} if job_id else None
-        rows = self.query("questionnaires", filters=filters, limit=limit, offset=offset, order_by=["id"])
+        rows = self.query("questionnaires", filters=filters, limit=limit, offset=offset, order_by=["job_id"])
         items: List[Questionnaire] = []
         for r in rows:
             q_items = [QuestionnaireItem(**qi) for qi in (r["questionnaire"] or {}).get("questionnaire", [])]
-            items.append(Questionnaire(id=r["id"], job_id=r["job_id"], questionnaire=q_items))
+            items.append(Questionnaire(job_id=r["job_id"], questionnaire=q_items))
         return items
 
     # ---- Candidate Fitness

@@ -30,6 +30,12 @@ class Job(BaseModel):
     job_title: str
     job_description: str
 
+class JobIdealCandidate(BaseModel):
+    __tablename__ = "job_ideal_candidates"
+    __primary_key__ = ("job_id",)
+    job_id: str
+    ideal_candidate_resume: Optional[str]
+
 class Candidate(BaseModel):
     __tablename__ = "candidates"
     __primary_key__ = ("id",)

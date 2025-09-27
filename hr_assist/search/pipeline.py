@@ -6,7 +6,7 @@ from dspy.teleprompt import BootstrapFewShot, LabeledFewShot
 from ..db.base import BaseDb
 from ..db.model import (
     Document, Job, Candidate, Questionnaire, QuestionnaireItem,
-    CandidateFitness)
+    CandidateFitness, JobIdealCandidate)
 from ..model.prompts import Question, MakeQuestionnaire, ScoreCandidate, IdealResumeSignature
 from .ranking import BaseRanker, BaseReranker, ScoringReranker, PgRanker
 from ..model.embed import PreTrainedEmbedder
@@ -184,3 +184,32 @@ class HRSearchPipeline:
             key=self._questionnaire.job_id,
             changes=dict(**self._questionnaire.model_dump())
         )
+
+    def generate_ideal_candidate(self) -> str:
+        """
+        Generate an ideal candidate resume for the job description.
+
+        Override the existing ideal candidate if any.
+        """
+        # TODO: we COULD prompt this better with few-shot examples
+        # however, it is arguably out of scope for this per-JD pipeline.
+        # BootstrapFewShot examples should be given at another level.
+        result = self._ic_module(target_job=self._job.job_description)
+        ideal_candidate = result.ideal_candidate_resume
+        if self._ideal_candidate is None:
+            ideal_candidate = JobIdealCandidate(
+                job_id=self._job.id,
+                ideal_candidate_resume=ideal_candidate
+            )
+            self.db.upsert_ideal_candidate(
+                ideal_candidate=ideal_candidate
+            )
+
+        return self._ideal_candidate
+
+    @property
+    def ideal_candidate(self) -> Optional[str]:
+        return self._ideal_candidate
+
+    def set_ideal_candidate(self, ideal_candidate: str) -> None:
+        self._ideal_candidate = ideal_candidate

@@ -8,6 +8,7 @@ from .model import (
     CandidateFitness,
     Document,
     Job,
+    JobIdealCandidate,
     Questionnaire,
 )
 
@@ -100,6 +101,23 @@ class BaseDb(ABC):
     def delete_job(self, job_id: str) -> bool:
         pass
 
+    # ---- Job Ideal Candidates
+    @abstractmethod
+    def upsert_job_ideal_candidate(self, ideal_candidate: JobIdealCandidate) -> None:
+        pass
+
+    @abstractmethod
+    def get_job_ideal_candidate(self, job_id: str) -> Optional[JobIdealCandidate]:
+        pass
+
+    @abstractmethod
+    def list_job_ideal_candidates(self, limit: Optional[int] = None, offset: int = 0) -> List[JobIdealCandidate]:
+        pass
+
+    @abstractmethod
+    def delete_job_ideal_candidate(self, job_id: str) -> bool:
+        pass
+
     # ---- Candidates
     @abstractmethod
     def upsert_candidate(self, candidate: Candidate) -> None:
@@ -123,7 +141,7 @@ class BaseDb(ABC):
         pass
 
     @abstractmethod
-    def get_questionnaire(self, questionnaire_id: str) -> Optional[Questionnaire]:
+    def get_questionnaire(self, job_id: str) -> Optional[Questionnaire]:
         pass
 
     @abstractmethod
