@@ -1,4 +1,4 @@
-from typing import Optional, List, Dict, Type, Tuple
+from typing import Optional, List, Dict, Type, Tuple, Union
 
 from dspy import Module, Example
 from dspy.teleprompt import BootstrapFewShot, LabeledFewShot
@@ -251,15 +251,13 @@ class HRSearchPipeline:
         # BootstrapFewShot examples should be given at another level.
         result = self._ic_module(target_job=self._job.job_description)
         ideal_candidate = result.ideal_candidate_resume
-        if self._ideal_candidate is None:
-            ideal_candidate = JobIdealCandidate(
-                job_id=self._job.id,
-                ideal_candidate_resume=ideal_candidate
-            )
-            self.db.upsert_ideal_candidate(
-                ideal_candidate=ideal_candidate
-            )
-
+        self._ideal_candidate = JobIdealCandidate(
+            job_id=self._job.id,
+            ideal_candidate_resume=ideal_candidate
+        )
+        self.db.upsert_ideal_candidate(
+            ideal_candidate=self._ideal_candidate
+        )
         return self._ideal_candidate
 
     @property
@@ -365,7 +363,7 @@ class HRSearchPipeline:
             if score.candidate_id != candidate_id
         ]
 
-    def generate_scores(self, candidate_ids: Optional[List[str]] = None) -> None:
+    def generate_scores(self, candidate_ids: Optional[Union[str, List[str]]] = None) -> None:
         """
         Generate scores for candidates based on the questionnaire.
 
@@ -374,8 +372,12 @@ class HRSearchPipeline:
         if self._questionnaire is None or len(self._questionnaire.questionnaire) == 0:
             raise ValueError("Questionnaire is not set or empty. Cannot generate scores.")
 
+        # retrieve the candidates to score
         if candidate_ids is None:
-            candidate_ids = [score.candidate_id for score in self._candidate_scores]
+            candidates = self._candidates
+        elif isinstance(candidate_ids, str):
+            candidates = [self._db.get_candidate(candidate_ids)]
+        else:
+            candidates = [self._db.get_candidate(cid) for cid in candidate_ids]
 
-        assert len(candidate_ids) > 0, "No candidates to score."
-        # TODO: finish
+

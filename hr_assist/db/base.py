@@ -151,6 +151,20 @@ class BaseDb(ABC):
     ) -> List[Questionnaire]:
         pass
 
+    # ---- Job Ideal Candidate
+
+    @abstractmethod
+    def upsert_job_ideal_candidate(self, ideal_candidate: JobIdealCandidate) -> None:
+        pass
+
+    @abstractmethod
+    def get_job_ideal_candidate(self, job_id: str) -> Optional[JobIdealCandidate]:
+        pass
+
+    @abstractmethod
+    def list_job_ideal_candidates(self, limit: Optional[int] = None, offset: int = 0) -> List[JobIdealCandidate]:
+        pass
+
     # ---- Job Candidate Scores
     @abstractmethod
     def upsert_job_candidate_score(self, score: JobCandidateScore) -> None:
