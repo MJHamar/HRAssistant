@@ -2,13 +2,16 @@ import abc
 from concurrent.futures import ProcessPoolExecutor
 from typing import Callable, Literal, Optional, Dict, Any, List, Tuple
 from pydantic import BaseModel
+from sqlalchemy.orm import Session
+from sqlalchemy import select
 
 from pathlib import Path
 
-from ..db import PostgresDB
 from ..utils import CachedBM25
 from ..model.embed import PreTrainedEmbedder
 from ..model.prompts import Question
+from ..db.model import Document, DocumentChunk, Candidate
+from ..db.similarity import sim_
 
 class BaseRanker(abc.ABC):
     @abc.abstractmethod
@@ -25,9 +28,9 @@ class BaseRanker(abc.ABC):
 
 class PgRanker(BaseRanker):
     def __init__(self,
-                 db: PostgresDB,
+                 db: Session,
                  embedding_fn: PreTrainedEmbedder,
-                 table: str,
+                 table: Literal["documents", "document_chunks"] = "documents",
                  similarity_metric: Literal["cosine", "euclidean", "inner_product"] = "cosine"):
         self.db = db
         self.embedding_fn = embedding_fn
@@ -37,24 +40,95 @@ class PgRanker(BaseRanker):
             raise ValueError(f"Unsupported similarity metric: {similarity_metric}")
 
     def rank(self, query: str, top_k: int = 5) -> List[Tuple[BaseModel, float]]:
+        """
+        Rank documents or chunks by vector similarity to query.
+
+        Returns:
+            List of tuples (document/chunk, similarity_score)
+        """
+        # Generate query embedding
         query_embedding = self.embedding_fn(query).detach().cpu().numpy().tolist()
 
-        results: List[Tuple[BaseModel, float]] = self.db.vector_search(
-            table=self.table,
-            query_embedding=query_embedding,
-            top_k=top_k,
-            metric=self.similarity_metric
+        if self.table == "documents":
+            model_cls = Document
+            embedding_column = Document.embedding
+        else:  # document_chunks
+            model_cls = DocumentChunk
+            embedding_column = DocumentChunk.embedding
+
+        # Create similarity expression
+        similarity_expr = sim_(embedding_column, query_embedding, metric=self.similarity_metric)
+
+        # Query with similarity filtering and ordering
+        stmt = (
+            select(model_cls, similarity_expr.label('similarity_score'))
+            .where(embedding_column.is_not(None))  # Only rows with embeddings
+            .order_by(similarity_expr.asc())  # Lower distance = higher similarity
+            .limit(top_k)
         )
+
+        results = []
+        for row in self.db.exec(stmt):
+            document_or_chunk = row[0]  # The model instance
+            score = row[1]  # The similarity score
+            results.append((document_or_chunk, score))
+
         return results
 
     def add_document(self, document_id: str, document: str, metadata: Optional[Dict[str, Any]] = None) -> None:
+        """
+        Add or update document embedding in the database.
+
+        This method generates embeddings and stores them directly in the Document/DocumentChunk table,
+        eliminating the need for a separate embeddings table.
+        """
         embedding = self.embedding_fn(document).detach().cpu().numpy().tolist()
-        self.db.upsert_embedding(
-            table=self.table,
-            record_id=document_id,
-            embedding=embedding,
-            metadata=None
-        )
+
+        if self.table == "documents":
+            # Update existing document or create new one
+            stmt = select(Document).where(Document.id == document_id)
+            existing_doc = self.db.exec(stmt).first()
+
+            if existing_doc:
+                existing_doc.embedding = embedding
+                if not existing_doc.content:
+                    existing_doc.content = document
+                self.db.merge(existing_doc)
+            else:
+                new_doc = Document(id=document_id, content=document, embedding=embedding)
+                self.db.add(new_doc)
+
+        else:  # document_chunks
+            # For chunks, we need document_id and chunk index
+            # This assumes document_id format like "doc_id:chunk_idx"
+            if ":" in document_id:
+                doc_id, chunk_idx_str = document_id.rsplit(":", 1)
+                chunk_idx = int(chunk_idx_str)
+            else:
+                raise ValueError("For chunks, document_id must be in format 'doc_id:chunk_idx'")
+
+            stmt = select(DocumentChunk).where(
+                DocumentChunk.document_id == doc_id,
+                DocumentChunk.idx == chunk_idx
+            )
+            existing_chunk = self.db.exec(stmt).first()
+
+            if existing_chunk:
+                existing_chunk.embedding = embedding
+                if not existing_chunk.text:
+                    existing_chunk.text = document
+                self.db.merge(existing_chunk)
+            else:
+                new_chunk = DocumentChunk(
+                    document_id=doc_id,
+                    idx=chunk_idx,
+                    text=document,
+                    embedding=embedding,
+                    metadata=metadata
+                )
+                self.db.add(new_chunk)
+
+        self.db.commit()
 
 class BM25Ranker(BaseRanker):
     def __init__(self,
@@ -121,7 +195,7 @@ class HybridRanker(BaseRanker):
 
     def add_document(self, document_id: str, document: str, metadata: Optional[Dict[str, Any]] = None) -> None:
         self.pg_ranker.add_document(document_id, document, metadata)
-        self.bm25_ranker.add_document(document)
+        self.bm25_ranker.add_document(document_id, document)
 
     def add_documents(self, document_ids: List[str], documents: List[str]) -> None:
         self.bm25_ranker.add_documents(documents)

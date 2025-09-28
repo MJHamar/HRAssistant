@@ -1,70 +1,84 @@
 from typing import Optional, List, Dict, Any
 import uuid
 
-from pydantic import BaseModel, Field
+from sqlmodel import SQLModel, Field, Relationship, Column, JSON
+from sqlalchemy.dialects.postgresql import UUID, ARRAY
+from sqlalchemy import Float
 
-class DocumentChunk(BaseModel):
+
+class DocumentChunk(SQLModel, table=True):
     __tablename__ = "document_chunks"
-    __primary_key__ = ("document_id", "idx")
-    document_id: str
-    idx: int
-    metadata: Optional[Dict[str, Any]]
-    toc_items: Optional[List[Any]]
-    tables: Optional[List[Any]]
-    images: Optional[List[Any]]
-    graphics: Optional[List[Any]]
-    text: Optional[str]
 
-class Document(BaseModel):
+    document_id: str = Field(primary_key=True)
+    idx: int = Field(primary_key=True)
+    metadata: Optional[Dict[str, Any]] = Field(sa_column=Column(JSON), default=None)
+    toc_items: Optional[List[Any]] = Field(sa_column=Column(JSON), default=None)
+    tables: Optional[List[Any]] = Field(sa_column=Column(JSON), default=None)
+    images: Optional[List[Any]] = Field(sa_column=Column(JSON), default=None)
+    graphics: Optional[List[Any]] = Field(sa_column=Column(JSON), default=None)
+    text: Optional[str] = None
+    embedding: Optional[List[float]] = Field(sa_column=Column(ARRAY(Float)), default=None)
+
+
+class Document(SQLModel, table=True):
     __tablename__ = "documents"
-    __primary_key__ = ("id",)
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    content: Optional[str]
-    chunks: Optional[List[DocumentChunk]]
 
-class Job(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    content: Optional[str] = None
+    embedding: Optional[List[float]] = Field(sa_column=Column(ARRAY(Float)), default=None)
+
+    # Relationship to chunks
+    chunks: List[DocumentChunk] = Relationship(back_populates=None)
+
+
+class Job(SQLModel, table=True):
     __tablename__ = "jobs"
-    __primary_key__ = ("id",)
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    company_name: Optional[str]
+
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    company_name: Optional[str] = None
     job_title: str
     job_description: str
 
-class JobIdealCandidate(BaseModel):
+
+class JobIdealCandidate(SQLModel, table=True):
     __tablename__ = "job_ideal_candidates"
-    __primary_key__ = ("job_id",)
-    job_id: str
-    ideal_candidate_resume: Optional[str]
 
-class Candidate(BaseModel):
+    job_id: str = Field(primary_key=True)
+    ideal_candidate_resume: Optional[str] = None
+
+
+class Candidate(SQLModel, table=True):
     __tablename__ = "candidates"
-    __primary_key__ = ("id",)
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    candidate_name: Optional[str]
-    candidate_cv_id: Optional[str] # document_id of the candidate's CV
 
-class QuestionnaireItem(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    candidate_name: Optional[str] = None
+    candidate_cv_id: Optional[str] = None  # document_id of the candidate's CV
+
+
+class QuestionnaireItem(SQLModel):
     criterion: str
-    importance: Optional[str]
+    importance: Optional[str] = None
 
-class Questionnaire(BaseModel):
+
+class Questionnaire(SQLModel, table=True):
     __tablename__ = "questionnaires"
-    __primary_key__ = ("job_id",)
-    job_id: str
-    questionnaire: List[QuestionnaireItem]
 
-class JobCandidateScore(BaseModel):
+    job_id: str = Field(primary_key=True)
+    questionnaire: List[QuestionnaireItem] = Field(sa_column=Column(JSON))
+
+
+class JobCandidateScore(SQLModel, table=True):
     __tablename__ = "job_candidate_scores"
-    __primary_key__ = ("job_id", "candidate_id")
-    job_id: str
-    candidate_id: str
+
+    job_id: str = Field(primary_key=True)
+    candidate_id: str = Field(primary_key=True)
     score: float
 
-class CandidateFitness(BaseModel):
+
+class CandidateFitness(SQLModel, table=True):
     __tablename__ = "candidate_fitness"
-    __primary_key__ = ("candidate_id", "job_id", "questionnaire_id")
-    "candidate_fitness - job_id - questionnaire_id is primary key."
-    candidate_id: str
-    job_id: str
-    questionnaire_id: str
-    scores: List[float]
+
+    candidate_id: str = Field(primary_key=True)
+    job_id: str = Field(primary_key=True)
+    questionnaire_id: str = Field(primary_key=True)
+    scores: List[float] = Field(sa_column=Column(JSON))

@@ -3,23 +3,29 @@ Service layer for the API. Implements business logic and persistence.
 """
 from typing import List, Optional, Tuple, Dict, Any
 from uuid import uuid4
+from sqlalchemy.orm import Session
+from sqlalchemy import select, delete
 
 from ..func.lm import score_candidate as lm_score_candidate, make_questionnaire as lm_make_questionnaire
 from ..utils import doc_to_md
-from ..db import PostgresDB, BaseDb
+from ..db import get_session_sync
 from ..db.model import Document, DocumentChunk, Job, Candidate, QuestionnaireItem, Questionnaire
 
 
 class HRService:
     def __init__(self):
-        self._db: BaseDb = PostgresDB()
-    
-    def set_db(self, db: BaseDb) -> None:
+        self._db: Session = get_session_sync()
+
+    def set_db(self, db: Session) -> None:
         self._db = db
 
     @property
-    def db(self) -> BaseDb:
+    def db(self) -> Session:
         return self._db
+
+    def close(self):
+        """Close the database session."""
+        self._db.close()
 
     # ---- Documents ----
     def convert_document(self, document_name: str, document_content: bytes) -> Tuple[str, List[DocumentChunk]]:
@@ -47,33 +53,52 @@ class HRService:
                     text=raw.get("text"),
                 )
             )
-        doc = Document(id=doc_id, content=content, chunks=chunks)
-        self.db.upsert_document(doc)
+        doc = Document(id=doc_id, content=content)
+        self.db.add(doc)
+        for chunk in chunks:
+            self.db.add(chunk)
+        self.db.commit()
         return doc_id
-    
+
     def list_documents(self) -> List[Document]:
-        return self.db.list_documents()
+        stmt = select(Document)
+        return list(self.db.exec(stmt))
 
     def get_document(self, document_id: str) -> Tuple[Optional[str], Optional[List[Dict[str, Any]]]]:
-        doc = self.db.get_document(document_id)
+        stmt = select(Document).where(Document.id == document_id)
+        doc = self.db.exec(stmt).first()
         if not doc:
             return None, None
-        chunk_payload = [c.model_dump() for c in (doc.chunks or [])]
+
+        # Get chunks separately
+        chunks_stmt = select(DocumentChunk).where(DocumentChunk.document_id == document_id)
+        chunks = list(self.db.exec(chunks_stmt))
+        chunk_payload = [c.model_dump() for c in chunks]
         return doc.content, chunk_payload
 
     def delete_document(self, document_id: str) -> bool:
-        return self.db.delete_document(document_id)
+        # Delete chunks first
+        chunks_stmt = delete(DocumentChunk).where(DocumentChunk.document_id == document_id)
+        self.db.exec(chunks_stmt)
+
+        # Delete document
+        doc_stmt = delete(Document).where(Document.id == document_id)
+        result = self.db.exec(doc_stmt)
+        self.db.commit()
+        return result.rowcount > 0
 
     # ---- Jobs ----
     def upload_job_description(self, job_title: str, job_description: str, company_name: Optional[str] = None) -> str:
         job_id = str(uuid4())
         job = Job(id=job_id, company_name=company_name, job_title=job_title, job_description=job_description)
-        self.db.upsert_job(job)
+        self.db.add(job)
+        self.db.commit()
         return job_id
 
     def generate_questionnaire(self, job_id: str):
         """Generate and persist a questionnaire for a job, return the questionnaire items list for API response."""
-        job = self.db.get_job(job_id)
+        stmt = select(Job).where(Job.id == job_id)
+        job = self.db.exec(stmt).first()
         if not job:
             return None
         pred = lm_make_questionnaire(job_description=job.job_description)
@@ -87,66 +112,98 @@ class HRService:
             if criterion:
                 items.append(QuestionnaireItem(criterion=criterion, importance=importance))
 
-        q_id = str(uuid4())
-        questionnaire = Questionnaire(id=q_id, job_id=job_id, questionnaire=items)
-        self.db.upsert_questionnaire(questionnaire)
+        questionnaire = Questionnaire(job_id=job_id, questionnaire=items)
+        self.db.merge(questionnaire)
+        self.db.commit()
         # API expects just the list of items under key "questionnaire"
         return [i.model_dump() for i in items]
 
     def list_jobs(self) -> List[Job]:
-        return self.db.list_jobs()
+        stmt = select(Job)
+        return list(self.db.exec(stmt))
 
     def get_job(self, job_id: str) -> Optional[Job]:
-        return self.db.get_job(job_id)
+        stmt = select(Job).where(Job.id == job_id)
+        return self.db.exec(stmt).first()
 
     def delete_job(self, job_id: str) -> bool:
-        return self.db.delete_job(job_id)
+        stmt = delete(Job).where(Job.id == job_id)
+        result = self.db.exec(stmt)
+        self.db.commit()
+        return result.rowcount > 0
 
     def patch_job(self, job_id: str, **fields) -> Optional[Job]:
-        # Use DB generic modify and then fetch
-        changed = {k: v for k, v in fields.items() if v is not None}
-        if not changed:
-            return self.db.get_job(job_id)
-        ok = self.db.modify("jobs", key={"id": job_id}, changes=changed)
-        if not ok:
+        # Get existing job
+        stmt = select(Job).where(Job.id == job_id)
+        job = self.db.exec(stmt).first()
+        if not job:
             return None
-        return self.db.get_job(job_id)
+
+        # Update fields
+        changed = {k: v for k, v in fields.items() if v is not None}
+        if changed:
+            for key, value in changed.items():
+                setattr(job, key, value)
+            self.db.merge(job)
+            self.db.commit()
+
+        return job
 
     # ---- Candidates ----
     def upload_candidate(self, candidate_name: str, candidate_cv_id: str) -> str:
         candidate_id = str(uuid4())
         cand = Candidate(id=candidate_id, candidate_name=candidate_name, candidate_cv_id=candidate_cv_id)
-        self.db.upsert_candidate(cand)
+        self.db.add(cand)
+        self.db.commit()
         return candidate_id
 
     def list_candidates(self) -> List[Candidate]:
-        return self.db.list_candidates()
+        stmt = select(Candidate)
+        return list(self.db.exec(stmt))
 
     def get_candidate(self, candidate_id: str) -> Optional[Candidate]:
-        return self.db.get_candidate(candidate_id)
+        stmt = select(Candidate).where(Candidate.id == candidate_id)
+        return self.db.exec(stmt).first()
 
     def delete_candidate(self, candidate_id: str) -> bool:
-        return self.db.delete_candidate(candidate_id)
+        stmt = delete(Candidate).where(Candidate.id == candidate_id)
+        result = self.db.exec(stmt)
+        self.db.commit()
+        return result.rowcount > 0
 
     def patch_candidate(self, candidate_id: str, **fields) -> Optional[Candidate]:
-        changed = {k: v for k, v in fields.items() if v is not None}
-        if not changed:
-            return self.db.get_candidate(candidate_id)
-        ok = self.db.modify("candidates", key={"id": candidate_id}, changes=changed)
-        if not ok:
+        # Get existing candidate
+        stmt = select(Candidate).where(Candidate.id == candidate_id)
+        candidate = self.db.exec(stmt).first()
+        if not candidate:
             return None
-        return self.db.get_candidate(candidate_id)
+
+        # Update fields
+        changed = {k: v for k, v in fields.items() if v is not None}
+        if changed:
+            for key, value in changed.items():
+                setattr(candidate, key, value)
+            self.db.merge(candidate)
+            self.db.commit()
+
+        return candidate
 
     def score_candidate(self, candidate_id: str, job_id: str) -> Optional[Dict[str, Any]]:
-        cand = self.db.get_candidate(candidate_id)
-        job = self.db.get_job(job_id)
+        # Get candidate and job using SQLAlchemy
+        cand_stmt = select(Candidate).where(Candidate.id == candidate_id)
+        cand = self.db.exec(cand_stmt).first()
+
+        job_stmt = select(Job).where(Job.id == job_id)
+        job = self.db.exec(job_stmt).first()
+
         if not cand or not job:
             return None
 
         # Fetch candidate CV content
         cv_text: Optional[str] = None
         if cand.candidate_cv_id:
-            cv_doc = self.db.get_document(cand.candidate_cv_id)
+            cv_stmt = select(Document).where(Document.id == cand.candidate_cv_id)
+            cv_doc = self.db.exec(cv_stmt).first()
             if cv_doc:
                 cv_text = cv_doc.content
         if not cv_text:
@@ -154,9 +211,11 @@ class HRService:
             return None
 
         # Get a questionnaire: use latest existing or generate if not present
-        questionnaires = self.db.list_questionnaires(job_id=job_id, limit=1)
-        if questionnaires:
-            q_items = questionnaires[0].questionnaire
+        q_stmt = select(Questionnaire).where(Questionnaire.job_id == job_id).limit(1)
+        questionnaire = self.db.exec(q_stmt).first()
+
+        if questionnaire:
+            q_items = questionnaire.questionnaire
         else:
             # Generate and persist
             gen_items = self.generate_questionnaire(job_id)

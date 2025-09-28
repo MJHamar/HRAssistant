@@ -1,4 +1,8 @@
 dspy
+sqlalchemy
+sqlmodel
+psycopg2-binary
+pgvector
 pandoc
 pymupdf4llm
 fastapi
