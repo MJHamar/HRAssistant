@@ -202,7 +202,6 @@ class HybridRanker(BaseRanker):
         for i, doc in enumerate(documents):
             self.pg_ranker.add_document(document_ids[i], doc, None)
 
-# TODO: rerankers
 class BaseReranker(abc.ABC):
     @abc.abstractmethod
     def rerank(self, query: str, documents: List[str], top_k: int = -1) -> list:
@@ -214,12 +213,13 @@ class ScoringReranker(BaseReranker):
         self.scoring_fn = scoring_fn
         self.parallelize = parallelize
 
-    def rerank(self, query: str, documents: List[str], top_k: int = -1) -> list:
+    def rerank(self, query: str, ids: List[str], documents: List[str], top_k: int = -1) -> list:
+        assert len(documents) == len(ids), "IDs and documents must have the same length."
         if self.parallelize:
             with ProcessPoolExecutor() as executor:
-                scores = list(executor.map(lambda doc: (doc, self.scoring_fn(query, doc)), documents))
+                scores = list(executor.map(lambda did, doc: (did, self.scoring_fn(query, doc)), ids, documents))
         else:
-            scores = [(doc, self.scoring_fn(query, doc)) for doc in documents]
+            scores = [(did, self.scoring_fn(query, doc)) for did, doc in zip(ids, documents)]
         ranked_docs = sorted(scores, key=lambda x: x[1], reverse=True)[:top_k]
         return ranked_docs
 

@@ -2,13 +2,13 @@
 Collection of DSPy.Signatures for prompting LLMs.
 """
 from typing import Literal, List
-import dspy 
+import dspy
 import pydantic
 
 class IdealResumeSignature(dspy.Signature):
     """
     Signature for generating an ideal candidate resume for a given job description
-    
+
     dspy version of the prompt template in ConFit-v2/src/utils/convert_by_llm.py
     """
     target_job: str = dspy.InputField(desc="The target job description to generate an ideal candidate resume for")
@@ -31,6 +31,6 @@ class ScoreCandidate(dspy.Signature):
     """
     candidate_cv: str = dspy.InputField(desc="The CV of the candidate to be scored")
     criteria: List[str] = dspy.InputField(desc="List of criteria to score the candidate on, based on the availalbe information in the CV")
-    scores: List[Literal["low", "medium", "high"]] = dspy.OutputField(desc="List of scores for each criterion, in the same order as the criteria")
+    scores: List[Literal["excellent", "good", "fair", "poor"]] = dspy.OutputField(desc="List of scores for each criterion, in the same order as the criteria")
     # TODO: might need explicit indexing to make it more stable
 

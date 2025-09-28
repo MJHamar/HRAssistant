@@ -3,13 +3,13 @@ from typing import Optional, List, Dict, Type, Tuple, Union
 from dspy import Module, Example
 from dspy.teleprompt import BootstrapFewShot, LabeledFewShot
 from sqlalchemy.orm import Session
-from sqlalchemy import select, delete
+from sqlalchemy import select, delete, update
 
 from ..db.model import (
     Document, Job, Candidate, Questionnaire, QuestionnaireItem,
     CandidateFitness, JobCandidateScore, JobIdealCandidate)
 from ..model.prompts import Question, MakeQuestionnaire, ScoreCandidate, IdealResumeSignature
-from .ranking import BaseRanker, BaseReranker, ScoringReranker, PgRanker
+from .ranking import BaseRanker, BaseReranker, ScoringReranker, PgRanker, QuestionnaireScorer
 from ..model.embed import PreTrainedEmbedder
 
 class HRSearchPipeline:
@@ -28,6 +28,7 @@ class HRSearchPipeline:
             similarity_metric: Optional[str] = "cosine",
             num_questions: Optional[int] = 10,
             rank_k: Optional[int] = 100,
+            parallelize_reranker: bool = True
             ) -> None:
 
         # Passed attributes
@@ -45,14 +46,15 @@ class HRSearchPipeline:
         self._similarity_metric = similarity_metric
         self._num_questions = num_questions
         self._rank_k = rank_k
+        self._parallelize_reranker = parallelize_reranker
 
         # Derived attributes
         self._questionnaire = self._init_questionnaire()
         self._ideal_candidate = self._init_ideal_candidate()
-        self._candidates, self._candidate_scores = self._init_candidates_scores()
+        self._candidate_scores = self._init_candidates_scores()
         self._candidate_fitness = self._init_candidate_fitness()
 
-    def _init_questionnaire(self):
+    def _init_questionnaire(self) -> Questionnaire:
         # Query for existing questionnaire
         stmt = select(Questionnaire).where(Questionnaire.job_id == self._job.id)
         questionnaire = self._db.exec(stmt).first()
@@ -68,7 +70,7 @@ class HRSearchPipeline:
 
         return questionnaire
 
-    def _init_ideal_candidate(self):
+    def _init_ideal_candidate(self) -> JobIdealCandidate:
         # Query for existing ideal candidate
         stmt = select(JobIdealCandidate).where(JobIdealCandidate.job_id == self._job.id)
         ideal_candidate = self._db.exec(stmt).first()
@@ -84,29 +86,15 @@ class HRSearchPipeline:
 
         return ideal_candidate
 
-    def _init_candidates_scores(self):
+    def _init_candidates_scores(self) -> List[JobCandidateScore]:
         # Query candidate scores for this job
         stmt = select(JobCandidateScore).where(
             JobCandidateScore.job_id == self._job.id
         ).order_by(JobCandidateScore.score.desc())
         candidate_scores = list(self._db.exec(stmt))
+        return candidate_scores
 
-        if candidate_scores:
-            # Get the actual candidate objects from the scores
-            candidate_ids = [score.candidate_id for score in candidate_scores]
-            candidates = []
-            for candidate_id in candidate_ids:
-                stmt = select(Candidate).where(Candidate.id == candidate_id)
-                candidate = self._db.exec(stmt).first()
-                if candidate:
-                    candidates.append(candidate)
-        else:
-            candidates = []
-            candidate_scores = []
-
-        return candidates, candidate_scores
-
-    def _init_candidate_fitness(self):
+    def _init_candidate_fitness(self) -> List[CandidateFitness]:
         # Query candidate fitness for this job
         stmt = select(CandidateFitness).where(CandidateFitness.job_id == self._job.id)
         candidate_fitness = list(self._db.exec(stmt))
@@ -355,13 +343,56 @@ class HRSearchPipeline:
         if self._questionnaire is None or len(self._questionnaire.questionnaire) == 0:
             raise ValueError("Questionnaire is not set or empty. Cannot generate scores.")
 
-        # retrieve the candidates to score
         if candidate_ids is None:
-            candidates = self._candidates
+            candidate_ids = [c.candidate_id for c in self._candidate_scores]
         elif isinstance(candidate_ids, str):
-            candidates = [self._db.get_candidate(candidate_ids)]
-        else:
-            candidates = [self._db.get_candidate(cid) for cid in candidate_ids]
+            candidate_ids = [candidate_ids]
+        # Fetch documents corresponding to candidate_ids
+        stmt = select(Document).join(Candidate, Document.id == Candidate.candidate_cv_id).where(
+            Candidate.id.in_(candidate_ids)
+        )
+        documents = self._db.exec(stmt).all()
 
-        # TODO instantiate and use the QuestionnaireScorer class here
+        scorer = QuestionnaireScorer(
+            questionnaire=[Question(criterion=q.criterion, importance=q.importance) for q in self._questionnaire.questionnaire],
+            scoring_fn=self._s_module,
+            score_weight_map={"high": 3, "medium": 2, "low": 1},
+            score_value_map={"excellent": 3, "good": 2, "fair": 1, "poor": 0}
+        )
+        reranker = ScoringReranker(
+            scoring_fn=scorer,
+            parallelize=self._parallelize_reranker
+        )
+        reranked = reranker.rerank(
+            query="",
+            documents=[d.content for d in documents]
+        )
+        # reranked is a list of (document_id, revised_score)
 
+        # Update the candidate scores in the database. Set only the revised_score field.
+        for doc_id, revised_score in reranked:
+            stmt = (
+                update(JobCandidateScore)
+                .where(
+                    JobCandidateScore.job_id == self._job.id,
+                    JobCandidateScore.candidate_id == Candidate.id,
+                    Candidate.candidate_cv_id == Document.id,
+                    Document.id == doc_id
+                )
+                .values(revised_score=revised_score)
+                .execution_options(synchronize_session=False)
+                ._from_objects(Candidate, Document)
+            )
+            self._db.exec(stmt)
+        self._db.commit()
+
+        # Refresh internal state (refetch from DB)
+        self._candidate_scores = self._init_candidates_scores()
+
+        # return the ranked list of candidates
+        stmt = select(Candidate).join(JobCandidateScore, Candidate.id == JobCandidateScore.candidate_id).where(
+            JobCandidateScore.job_id == self._job.id,
+            JobCandidateScore.revised_score.isnot(None)
+        ).order_by(JobCandidateScore.revised_score.desc().nullslast())
+        ranked_candidates = self._db.exec(stmt).all()
+        return ranked_candidates

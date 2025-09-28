@@ -73,6 +73,7 @@ class JobCandidateScore(SQLModel, table=True):
     job_id: str = Field(primary_key=True)
     candidate_id: str = Field(primary_key=True)
     score: float
+    revised_score: Optional[float] = None
 
 
 class CandidateFitness(SQLModel, table=True):
