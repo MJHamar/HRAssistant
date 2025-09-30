@@ -12,11 +12,13 @@ from ..utils import doc_to_md
 from ..db import get_session_sync, create_tables, engine
 from ..db.model import Document, DocumentChunk, Job, Candidate, QuestionnaireItem, Questionnaire
 from ..model.lm import configure_dspy, get_dspy_modules, make_questionnaire as lm_make_questionnaire, score_candidate as lm_score_candidate
+from ..model.embed import PreTrainedEmbedder, init_embedder
 
 
 # Global singletons initialized at startup
 _db_engine = None
 _dspy_configured = False
+_embedder_configured = False
 
 
 def init_service() -> None:
@@ -29,7 +31,7 @@ def init_service() -> None:
     3. Initialize DB engine as singleton
     4. Configure DSPy and instantiate global prompting modules
     """
-    global _db_engine, _dspy_configured
+    global _db_engine, _dspy_configured, _embedder_configured
 
     # Load environment variables from .env file
     load_dotenv()
@@ -64,10 +66,20 @@ def init_service() -> None:
         _dspy_configured = True
         print("✓ DSPy configured and modules initialized")
 
+    if not _embedder_configured:
+        # Initialize global embedder
+        init_embedder(
+            model_name_or_path=os.getenv("EMBEDDING_MODEL_NAME", "sentence-transformers/all-MiniLM-L6-v2"),
+            embedding_method=os.getenv("EMBEDDING_METHOD", "mean_pool")
+        )
+        _embedder_configured = True
+        print("✓ Embedder initialized")
+
+
 
 class HRService:
-    def __init__(self):
-        self._db: Session = get_session_sync()
+    def __init__(self, db: Session = get_session_sync()):
+        self._db: Session = db
 
     def set_db(self, db: Session) -> None:
         self._db = db

@@ -1,8 +1,12 @@
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from ..db.model import Candidate, Questionnaire, Document, Job
+from hr_assist.model.embed import init_embedder
+
+from ..db.model import Candidate, Questionnaire, Document, Job, QuestionnaireItem
+from ..model.embed import embedder
+
 
 from .service import HRService
 from ..search.pipeline import HRSearchService
@@ -75,12 +79,87 @@ class CandidateScoreResponse(BaseModel):
     report: Dict[str, Any]
 
 
+# Search API Models
+class SearchSessionRequest(BaseModel):
+    similarity_metric: Optional[str] = 'cosine'  # e.g., 'cosine', 'euclidean'
+    num_questions: Optional[int] = 15
+    rank_k: Optional[int] = 200  # Number of top candidates to consider for reranking
+class SearchSessionResponse(BaseModel):
+    job_id: str
+    status: str
+    questionnaire_count: int
+    ideal_candidate_available: bool
+    candidate_scores_count: int
+
+class QuestionnaireGenerateRequest(BaseModel):
+    use_existing_questions: bool = True
+    precise_num_questions: bool = False
+
+class QuestionnaireItemRequest(BaseModel):
+    criterion: str
+    importance: Optional[str] = None
+
+class QuestionnaireRemoveRequest(BaseModel):
+    criterion: Optional[str] = None
+    index: Optional[int] = None
+
+class QuestionnaireUpdateRequest(BaseModel):
+    questionnaire: List[QuestionnaireItem]
+
+class CandidateScoreUpdateRequest(BaseModel):
+    candidate_id: str
+    score: float
+
+class CandidateScoresUpdateRequest(BaseModel):
+    scores: List[Dict[str, Union[str, float]]]  # List of {candidate_id: str, score: float}
+
+class GenerateScoresRequest(BaseModel):
+    candidate_ids: Optional[List[str]] = None
+
+class RankedCandidatesResponse(BaseModel):
+    ranked_candidates: List[Candidate]
+
+
 class UserSession(BaseModel):
     """User session containing database connection and services."""
     session_id: str
     db: Session
     base_service: HRService
     search_service: Optional[HRSearchService] = None
+
+    def init_search_session(self, job_id: str, similarity_metric: str = 'cosine', num_questions: int = 15, rank_k = 200) -> HRSearchService:
+        """Initialize or get the search service for a specific job."""
+        from ..search.pipeline import HRSearchService
+        from ..model.lm import make_questionnaire, score_candidate, make_resume
+        from ..model.embed import PreTrainedEmbedder
+        from sqlalchemy import select
+
+        if self.search_service is not None:
+            # Check if it's for the same job
+            if str(self.search_service._job.id) == job_id:
+                return self.search_service
+
+        # Get the job
+        stmt = select(Job).where(Job.id == job_id)
+        job = self.db.exec(stmt).first()
+        if not job:
+            raise ValueError(f"Job with id {job_id} not found")
+
+        # Create search service
+        self.search_service = HRSearchService(
+            db=self.db,
+            embedder=embedder,
+            ic_module=make_resume,
+            q_module=make_questionnaire,
+            s_module=score_candidate,
+            job=job,
+            similarity_metric=similarity_metric,
+            num_questions=num_questions,
+            rank_k=rank_k,
+            parallelize_reranker=False #FIXME: parallelize once we know it works.
+        )
+
+        return self.search_service
 
 
 __all__ = [
@@ -106,6 +185,16 @@ __all__ = [
     "CandidateResponse",
     "CandidateDeleteResponse",
     "CandidateScoreResponse",
+    # Search
+    "SearchSessionResponse",
+    "QuestionnaireGenerateRequest",
+    "QuestionnaireItemRequest",
+    "QuestionnaireRemoveRequest",
+    "QuestionnaireUpdateRequest",
+    "CandidateScoreUpdateRequest",
+    "CandidateScoresUpdateRequest",
+    "GenerateScoresRequest",
+    "RankedCandidatesResponse",
     # Session
     "UserSession",
 ]

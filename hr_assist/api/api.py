@@ -5,6 +5,7 @@ from fastapi_sessions.backends.implementations import InMemoryBackend
 from fastapi_sessions.session_verifier import SessionVerifier
 from fastapi_sessions.frontends.implementations import SessionCookie, CookieParameters
 from uuid import uuid4
+from sqlalchemy import select
 
 from hr_assist.api.model import (
     DocumentUploadRequest,
@@ -26,12 +27,29 @@ from hr_assist.api.model import (
     CandidateResponse,
     CandidateDeleteResponse,
     CandidateScoreResponse,
+    # Search models
+    SearchSessionResponse,
+    QuestionnaireGenerateRequest,
+    QuestionnaireItemRequest,
+    QuestionnaireRemoveRequest,
+    QuestionnaireUpdateRequest,
+    CandidateScoreUpdateRequest,
+    CandidateScoresUpdateRequest,
+    GenerateScoresRequest,
+    RankedCandidatesResponse,
     UserSession,
 )
 
 from .. import __version__
 from .service import HRService, init_service
 from ..db import get_session_sync
+from ..db.model import Job, QuestionnaireItem, Questionnaire, JobCandidateScore
+from ..search.ranking import PgRanker
+from ..model.lm import (
+    make_questionnaire as questionnaire_module,
+    make_resume as ideal_candidate_module,
+    score_candidate as scoring_module,
+    )
 from ..search.pipeline import HRSearchService
 
 
@@ -106,8 +124,7 @@ def get_user_session(request: Request) -> UserSession:
         # Create new session
         session_id = uuid4()
         db_session = get_session_sync()
-        base_service = HRService()
-        base_service.set_db(db_session)
+        base_service = HRService(db_session)
 
         user_session = UserSession(
             session_id=str(session_id),
@@ -281,4 +298,174 @@ def score_candidate(candidate_id: str, job_id: str, session: UserSession = Depen
     if report is None:
         raise HTTPException(status_code=404, detail="Candidate or Job not found")
     return report
+
+
+@app.get("/search/{job_id}", tags=["Search"], summary="Initialize or get search session for a job", response_model=SearchSessionResponse)
+def init_search_session(job_id: str, similarity_metric: str = 'cosine', num_questions: int = 15, rank_k: int = 200, session: UserSession = Depends(get_user_session)):
+    """Initialize search session for a specific job."""
+    # Check if job exists
+    stmt = select(Job).where(Job.id == job_id)
+    job = session.db.exec(stmt).first()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    # Initialize search service
+    search_service = session.init_search_session(
+        job_id, similarity_metric=similarity_metric, num_questions=num_questions, rank_k=rank_k)
+
+    return {
+        "job_id": job_id,
+        "status": "initialized",
+        "questionnaire_count": len(search_service.questionnaire.questionnaire) if search_service.questionnaire else 0,
+        "ideal_candidate_available": search_service.ideal_candidate is not None,
+        "candidate_scores_count": len(search_service.candidate_scores)
+    }
+
+
+# Questionnaire endpoints
+@app.post("/search/{job_id}/questionnaire/generate", tags=["Search"], summary="Generate questionnaire for job")
+def generate_questionnaire(job_id: str, request: QuestionnaireGenerateRequest, session: UserSession = Depends(get_user_session)):
+    """Generate a questionnaire for the job."""
+    search_service = session.init_search_session(job_id)
+    search_service.generate_questionnaire(num_questions=request.num_questions)
+    return {"message": "Questionnaire generated successfully"}
+
+
+@app.get("/search/{job_id}/questionnaire", tags=["Search"], summary="Get questionnaire for job")
+def get_questionnaire(job_id: str, session: UserSession = Depends(get_user_session)):
+    """Get the questionnaire for the job."""
+    search_service = session.init_search_session(job_id)
+    questionnaire = search_service.questionnaire()
+    if not questionnaire:
+        raise HTTPException(status_code=404, detail="Questionnaire not found")
+    return questionnaire
+
+
+@app.put("/search/{job_id}/questionnaire", tags=["Search"], summary="Set questionnaire for job")
+def set_questionnaire(job_id: str, request: QuestionnaireUpdateRequest, session: UserSession = Depends(get_user_session)):
+    """Set the questionnaire for the job."""
+    search_service = session.init_search_session(job_id)
+    questionnaire = Questionnaire(job_id=job_id, questionnaire=request.questionnaire)
+    search_service.set_questionnaire(questionnaire)
+    return {"message": "Questionnaire updated successfully"}
+
+
+@app.delete("/search/{job_id}/questionnaire", tags=["Search"], summary="Delete questionnaire for job")
+def delete_questionnaire(job_id: str, session: UserSession = Depends(get_user_session)):
+    """Delete the questionnaire for the job."""
+    search_service = session.init_search_session(job_id)
+    search_service.delete_questionnaire()
+    return {"message": "Questionnaire deleted successfully"}
+
+
+@app.post("/search/{job_id}/questionnaire/items", tags=["Search"], summary="Add questionnaire item")
+def add_questionnaire_item(job_id: str, item: QuestionnaireItemRequest, session: UserSession = Depends(get_user_session)):
+    """Add an item to the questionnaire."""
+    search_service = session.init_search_session(job_id)
+    questionnaire_item = QuestionnaireItem(
+        criterion=item.criterion,
+        importance=item.importance
+    )
+    search_service.add_questionnaire_item(questionnaire_item)
+    return {"message": "Questionnaire item added successfully"}
+
+
+@app.delete("/search/{job_id}/questionnaire/items", tags=["Search"], summary="Remove questionnaire item")
+def remove_questionnaire_item(job_id: str, request: QuestionnaireRemoveRequest, session: UserSession = Depends(get_user_session)):
+    """Remove an item from the questionnaire."""
+    search_service = session.init_search_session(job_id)
+    search_service.remove_questionnaire_item(criterion=request.criterion, index=request.index)
+    return {"message": "Questionnaire item removed successfully"}
+
+
+# Ideal candidate endpoints
+@app.post("/search/{job_id}/ideal-candidate/generate", tags=["Search"], summary="Generate ideal candidate resume")
+def generate_ideal_candidate(job_id: str, session: UserSession = Depends(get_user_session)):
+    """Generate an ideal candidate resume for the job."""
+    search_service = session.init_search_session(job_id)
+    ideal_candidate = search_service.generate_ideal_candidate()
+    return {"ideal_candidate_resume": ideal_candidate.ideal_candidate_resume}
+
+
+@app.get("/search/{job_id}/ideal-candidate", tags=["Search"], summary="Get ideal candidate resume")
+def get_ideal_candidate(job_id: str, session: UserSession = Depends(get_user_session)):
+    """Get the ideal candidate resume for the job."""
+    search_service = session.init_search_session(job_id)
+    ideal_candidate = search_service.ideal_candidate()
+    if ideal_candidate is None:
+        raise HTTPException(status_code=404, detail="Ideal candidate not found")
+    return {"ideal_candidate_resume": ideal_candidate.ideal_candidate_resume}
+
+
+@app.put("/search/{job_id}/ideal-candidate", tags=["Search"], summary="Set ideal candidate resume")
+def set_ideal_candidate(job_id: str, resume: str, session: UserSession = Depends(get_user_session)):
+    """Set the ideal candidate resume for the job."""
+    search_service = session.init_search_session(job_id)
+    search_service.set_ideal_candidate(resume)
+    return {"message": "Ideal candidate resume updated successfully"}
+
+
+@app.delete("/search/{job_id}/ideal-candidate", tags=["Search"], summary="Delete ideal candidate resume")
+def delete_ideal_candidate(job_id: str, session: UserSession = Depends(get_user_session)):
+    """Delete the ideal candidate resume for the job."""
+    search_service = session.init_search_session(job_id)
+    search_service.delete_ideal_candidate()
+    return {"message": "Ideal candidate resume deleted successfully"}
+
+
+# Candidate scoring endpoints
+@app.get("/search/{job_id}/candidates/rank", tags=["Search"], summary="Rank candidates for job", response_model=RankedCandidatesResponse)
+def rank_candidates(job_id: str, top_k: Optional[int] = None, session: UserSession = Depends(get_user_session)):
+    """Rank candidates for the job."""
+    search_service = session.init_search_session(job_id)
+    ranked_candidates = search_service.rank_candidates(top_k=top_k)
+    return {"ranked_candidates": ranked_candidates}
+
+
+@app.get("/search/{job_id}/candidates/scores", tags=["Search"], summary="Get candidate scores for job")
+def get_candidate_scores(job_id: str, session: UserSession = Depends(get_user_session)):
+    """Get candidate scores for the job."""
+    search_service = session.init_search_session(job_id)
+    scores = search_service.candidate_scores
+    return {"candidate_scores": scores}
+
+
+@app.put("/search/{job_id}/candidates/scores", tags=["Search"], summary="Update candidate scores")
+def update_candidate_scores(job_id: str, scores: CandidateScoresUpdateRequest, session: UserSession = Depends(get_user_session)):
+    """Update candidate scores for the job."""
+    search_service = session.init_search_session(job_id)
+    job_scores = [
+        JobCandidateScore(
+            job_id=job_id,
+            candidate_id=score_dict["candidate_id"],
+            score=score_dict["score"]
+        )
+        for score_dict in scores.scores
+    ]
+    search_service.update_candidate_scores(job_scores)
+    return {"message": "Candidate scores updated successfully"}
+
+
+@app.post("/search/{job_id}/candidates/{candidate_id}/score", tags=["Search"], summary="Add or update candidate score")
+def add_candidate_score(job_id: str, candidate_id: str, score: CandidateScoreUpdateRequest, session: UserSession = Depends(get_user_session)):
+    """Add or update a candidate score."""
+    search_service = session.init_search_session(job_id)
+    search_service.add_candidate_score(candidate_id, score.score)
+    return {"message": "Candidate score updated successfully"}
+
+
+@app.delete("/search/{job_id}/candidates/{candidate_id}/score", tags=["Search"], summary="Delete candidate score")
+def delete_candidate_score(job_id: str, candidate_id: str, session: UserSession = Depends(get_user_session)):
+    """Delete a candidate score."""
+    search_service = session.init_search_session(job_id)
+    search_service.delete_candidate_score(candidate_id)
+    return {"message": "Candidate score deleted successfully"}
+
+
+@app.post("/search/{job_id}/candidates/generate-scores", tags=["Search"], summary="Generate scores for candidates")
+def generate_scores(job_id: str, request: GenerateScoresRequest, session: UserSession = Depends(get_user_session)):
+    """Generate scores for candidates based on questionnaire."""
+    search_service = session.init_search_session(job_id)
+    ranked_candidates = search_service.generate_scores(candidate_ids=request.candidate_ids)
+    return {"ranked_candidates": ranked_candidates}
 

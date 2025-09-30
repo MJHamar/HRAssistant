@@ -154,17 +154,19 @@ class HRSearchService:
 
     def generate_questionnaire(
             self,
+            num_questions: Optional[int] = None,
             use_existing_questions: bool = True,
             precise_num_questions: bool = False
         ) -> Questionnaire:
+        target_num_questions = num_questions or self._num_questions
         # if the questionnaire is already specified, do nothing
-        if len(self._questionnaire.questionnaire) >= self._num_questions:
+        if len(self._questionnaire.questionnaire) >= target_num_questions:
             return self._questionnaire
         # if it is partly speficied, use the existing one as a few-shot example
         if use_existing_questions and len(self._questionnaire.questionnaire) > 0:
             prompter = LabeledFewShot().compile(
                 self._q_module,
-                trainset=HRSearchPipeline.make_questionnaire_example(self._job.job_description, self._questionnaire.questionnaire)
+                trainset=HRSearchService.make_questionnaire_example(self._job.job_description, self._questionnaire.questionnaire)
             )
         else:
             prompter = self._q_module
@@ -182,15 +184,15 @@ class HRSearchService:
             if q.criterion not in seen:
                 unique_questions.append(q)
                 seen.add(q.criterion)
-        assert not precise_num_questions or self._num_questions is not None, "If precise_num_questions is True, num_questions must be specified"
-        assert not precise_num_questions or len(unique_questions) >= self._num_questions, "If precise_num_questions is True, there must be at least num_questions unique questions."
+        assert not precise_num_questions or target_num_questions is not None, "If precise_num_questions is True, num_questions must be specified"
+        assert not precise_num_questions or len(unique_questions) >= target_num_questions, "If precise_num_questions is True, there must be at least num_questions unique questions."
         # trim to num_questions if there are more than num_questions
         # we order by importance and remove the least important ones first
 
-        if precise_num_questions and len(unique_questions) > self._num_questions:
+        if precise_num_questions and len(unique_questions) > target_num_questions:
             importance_order = {"high": 2, "medium": 1, "low": 0}
             unique_questions.sort(key=lambda q: importance_order[q.importance], reverse=True)
-            unique_questions = unique_questions[:self._num_questions]
+            unique_questions = unique_questions[:target_num_questions]
         # convert back to db model
         self._questionnaire = Questionnaire(
             job_id=self._job.id,
@@ -263,7 +265,7 @@ class HRSearchService:
         return self._ideal_candidate
 
     @property
-    def ideal_candidate(self) -> Optional[str]:
+    def ideal_candidate(self) -> Optional[JobIdealCandidate]:
         return self._ideal_candidate
 
     def set_ideal_candidate(self, ideal_candidate: str) -> None:
@@ -362,7 +364,7 @@ class HRSearchService:
             if score.candidate_id != candidate_id
         ]
 
-    def generate_scores(self, candidate_ids: Optional[Union[str, List[str]]] = None) -> None:
+    def generate_scores(self, candidate_ids: Optional[Union[str, List[str]]] = None) -> List[Candidate]:
         """
         Generate scores for candidates based on the questionnaire.
 
@@ -414,3 +416,8 @@ class HRSearchService:
         ).order_by(JobCandidateScore.revised_score.desc().nullslast())
         ranked_candidates = self._db.exec(stmt).all()
         return ranked_candidates
+
+    @property
+    def job_id(self) -> str:
+        """Get the job ID for this search service."""
+        return str(self._job.id)

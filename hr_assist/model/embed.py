@@ -5,7 +5,6 @@ from typing import Literal, Dict, Any
 from transformers import AutoModel, AutoTokenizer
 import torch
 from torch.nn import Module
-import pytorch_lightning as pl
 
 class PreTrainedEmbedder(Module):
     """
@@ -20,7 +19,7 @@ class PreTrainedEmbedder(Module):
         # self._tokenizer = PreTrainedEmbedder.make_tokenizer(model_name_or_path)
         self._model = AutoModel.from_pretrained(model_name_or_path)
         self.embedding_method = embedding_method
-    
+
     # average_pool and mean_pool are nearly the same, mean_pool is adapted from the official code of Jina V2.
     def average_pool(
         self, last_hidden_states: torch.Tensor, attention_mask: torch.Tensor
@@ -30,12 +29,12 @@ class PreTrainedEmbedder(Module):
             ~attention_mask[..., None].bool(), 0.0
         )
         return last_hidden.sum(dim=1) / attention_mask.sum(dim=1)[..., None]
-    
+
     def mean_pool(
         self, last_hidden_states: torch.Tensor, attention_mask: torch.Tensor
         ) -> torch.Tensor:
         """
-        Taken from https://github.com/jasonyux/ConFit-v2, which 
+        Taken from https://github.com/jasonyux/ConFit-v2, which
         adapted from https://huggingface.co/jinaai/jina-embeddings-v2-base-zh
         """
         token_embeddings = last_hidden_states
@@ -64,11 +63,17 @@ class PreTrainedEmbedder(Module):
         else:
             raise NotImplementedError
         return embedding_vec
-    
+
     def forward(self, batched_data: Dict[str, Any]):
         """
         batched_data is a dictionary of string keys mapping to tokenized inputs.
         Tokenized inputs (like in Yu et. al 2025) should be formatted as <context_taxon_token> : <tokenized text>
         """
         return self._get_encoder_embedding(batched_data)
-    
+
+embedder = None
+def init_embedder(model_name_or_path: str, embedding_method: Literal['cls_token', 'average_pool', 'mean_pool'] = 'cls_token', embedder_cls=PreTrainedEmbedder) -> PreTrainedEmbedder:
+    global embedder
+    if embedder is None:
+        embedder = embedder_cls(model_name_or_path=model_name_or_path, embedding_method=embedding_method)
+    return embedder
