@@ -1,7 +1,11 @@
 from typing import Any, Dict, List, Optional
 from pydantic import BaseModel
+from sqlalchemy.orm import Session
 
 from ..db.model import Candidate, Questionnaire, Document, Job
+
+from .service import HRService
+from ..search.pipeline import HRSearchService
 
 
 # Documents
@@ -71,6 +75,14 @@ class CandidateScoreResponse(BaseModel):
     report: Dict[str, Any]
 
 
+class UserSession(BaseModel):
+    """User session containing database connection and services."""
+    session_id: str
+    db: Session
+    base_service: HRService
+    search_service: Optional[HRSearchService] = None
+
+
 __all__ = [
     # Documents
     "DocumentUploadRequest",
@@ -94,4 +106,6 @@ __all__ = [
     "CandidateResponse",
     "CandidateDeleteResponse",
     "CandidateScoreResponse",
+    # Session
+    "UserSession",
 ]

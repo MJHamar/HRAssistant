@@ -12,7 +12,7 @@ from ..model.prompts import Question, MakeQuestionnaire, ScoreCandidate, IdealRe
 from .ranking import BaseRanker, BaseReranker, ScoringReranker, PgRanker, QuestionnaireScorer
 from ..model.embed import PreTrainedEmbedder
 
-class HRSearchPipeline:
+class HRSearchService:
     def __init__(
             self,
             db: Session,

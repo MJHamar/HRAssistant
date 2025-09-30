@@ -1,15 +1,68 @@
 """
 Service layer for the API. Implements business logic and persistence.
 """
+import os
 from typing import List, Optional, Tuple, Dict, Any
 from uuid import uuid4
 from sqlalchemy.orm import Session
 from sqlalchemy import select, delete
+from dotenv import load_dotenv
 
-from ..func.lm import score_candidate as lm_score_candidate, make_questionnaire as lm_make_questionnaire
 from ..utils import doc_to_md
-from ..db import get_session_sync
+from ..db import get_session_sync, create_tables, engine
 from ..db.model import Document, DocumentChunk, Job, Candidate, QuestionnaireItem, Questionnaire
+from ..model.lm import configure_dspy, get_dspy_modules, make_questionnaire as lm_make_questionnaire, score_candidate as lm_score_candidate
+
+
+# Global singletons initialized at startup
+_db_engine = None
+_dspy_configured = False
+
+
+def init_service() -> None:
+    """
+    Initialize global service components.
+
+    This function should be called once at application startup to:
+    1. Load configuration from .env file
+    2. Ensure database is accessible and tables are created
+    3. Initialize DB engine as singleton
+    4. Configure DSPy and instantiate global prompting modules
+    """
+    global _db_engine, _dspy_configured
+
+    # Load environment variables from .env file
+    load_dotenv()
+
+    # Verify database connection and create tables
+    try:
+        create_tables()
+        # Test connection
+        session = get_session_sync()
+        session.close()
+        print("✓ Database connection established and tables created")
+    except Exception as e:
+        raise RuntimeError(f"Failed to initialize database: {e}")
+
+    # Configure DSPy
+    if not _dspy_configured:
+        api_key = os.getenv("DSPY_API_KEY")
+        if not api_key:
+            raise RuntimeError("DSPY_API_KEY environment variable is required")
+
+        provider = os.getenv("DSPY_PROVIDER", "gemini")
+        model = os.getenv("DSPY_MODEL", "gemini-2.5-flash")
+
+        configure_dspy(
+            provider=provider,
+            model=model,
+            api_key=api_key
+        )
+
+        # Initialize global DSPy modules
+        get_dspy_modules()
+        _dspy_configured = True
+        print("✓ DSPy configured and modules initialized")
 
 
 class HRService:

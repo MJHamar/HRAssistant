@@ -14,3 +14,5 @@ uvicorn
 rank_bm25
 torch
 transformers
+fastapi-sessions
+python-dotenv
