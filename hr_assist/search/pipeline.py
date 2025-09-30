@@ -22,7 +22,6 @@ class HRSearchPipeline:
             s_module: Module,  # for scoring candidates
             job: Job,
             ranker_cls: Optional[Type[BaseRanker]] = PgRanker,
-            reranker_cls: Optional[Type[BaseReranker]] = ScoringReranker,
             document_table: Optional[str] = "documents",
             candidate_table: Optional[str] = "candidates",
             similarity_metric: Optional[str] = "cosine",
@@ -39,7 +38,6 @@ class HRSearchPipeline:
         self._s_module = s_module
         self._job = job
         self._ranker_cls = ranker_cls
-        self._reranker_cls = reranker_cls
 
         self._document_table = document_table
         self._candidate_table = candidate_table
@@ -49,6 +47,8 @@ class HRSearchPipeline:
         self._parallelize_reranker = parallelize_reranker
 
         # Derived attributes
+        self._ranker = None
+        self._reranker = None
         self._questionnaire = self._init_questionnaire()
         self._ideal_candidate = self._init_ideal_candidate()
         self._candidate_scores = self._init_candidates_scores()
@@ -100,19 +100,47 @@ class HRSearchPipeline:
         candidate_fitness = list(self._db.exec(stmt))
         return candidate_fitness
 
+    def _init_ranker(self) -> BaseRanker:
+        assert self._ranker_cls is not None, "Ranker class is not specified."
+        ranker = self._ranker_cls(
+            db=self._db,
+            embedding_fn=self._embedder,
+            table=self._document_table,
+            similarity_metric=self._similarity_metric
+        )
+        return ranker
+
+    def _init_reranker(self) -> ScoringReranker:
+        assert self.questionnaire is not None and len(self._questionnaire.questionnaire) > 0, "Questionnaire must be set and non-empty to initialize reranker."
+        assert self._s_module is not None, "Scoring module must be provided to initialize reranker."
+
+        scorer = QuestionnaireScorer(
+            questionnaire=[Question(criterion=q.criterion, importance=q.importance) for q in self._questionnaire.questionnaire],
+            scoring_fn=self._s_module,
+            score_weight_map={"high": 3, "medium": 2, "low": 1},
+            score_value_map={"excellent": 3, "good": 2, "fair": 1, "poor": 0}
+        )
+        reranker = ScoringReranker(
+            scoring_fn=scorer,
+            parallelize=self._parallelize_reranker
+        )
+        return reranker
+
     @property
     def db(self) -> Session:
         return self._db
 
     @property
     def ranker(self) -> BaseRanker:
-        assert self._ranker_cls is not None, "Ranker class is not specified."
-        return self._ranker_cls(
-            db=self._db,
-            embedding_fn=self._embedder,
-            table=self._document_table,
-            similarity_metric=self._similarity_metric
-        )
+        if self._ranker is None:
+            self._ranker = self._init_ranker()
+        return self._ranker
+
+    @property
+    def reranker(self) -> BaseReranker:
+        if self._reranker is None:
+            self._reranker = self._init_reranker()
+        return self._reranker
 
     @staticmethod
     def make_questionnaire_example(jd: str, questions: List[QuestionnaireItem]) -> Example[Questionnaire]:
@@ -353,18 +381,10 @@ class HRSearchPipeline:
         )
         documents = self._db.exec(stmt).all()
 
-        scorer = QuestionnaireScorer(
-            questionnaire=[Question(criterion=q.criterion, importance=q.importance) for q in self._questionnaire.questionnaire],
-            scoring_fn=self._s_module,
-            score_weight_map={"high": 3, "medium": 2, "low": 1},
-            score_value_map={"excellent": 3, "good": 2, "fair": 1, "poor": 0}
-        )
-        reranker = ScoringReranker(
-            scoring_fn=scorer,
-            parallelize=self._parallelize_reranker
-        )
-        reranked = reranker.rerank(
-            query="",
+
+        reranked = self.reranker.rerank(
+            query="", # not used.
+            ids=[d.id for d in documents],
             documents=[d.content for d in documents]
         )
         # reranked is a list of (document_id, revised_score)
@@ -380,8 +400,6 @@ class HRSearchPipeline:
                     Document.id == doc_id
                 )
                 .values(revised_score=revised_score)
-                .execution_options(synchronize_session=False)
-                ._from_objects(Candidate, Document)
             )
             self._db.exec(stmt)
         self._db.commit()
@@ -390,7 +408,7 @@ class HRSearchPipeline:
         self._candidate_scores = self._init_candidates_scores()
 
         # return the ranked list of candidates
-        stmt = select(Candidate).join(JobCandidateScore, Candidate.id == JobCandidateScore.candidate_id).where(
+        stmt = select(Candidate).join(JobCandidateScore, JobCandidateScore.candidate_id == Candidate.id).where(
             JobCandidateScore.job_id == self._job.id,
             JobCandidateScore.revised_score.isnot(None)
         ).order_by(JobCandidateScore.revised_score.desc().nullslast())
