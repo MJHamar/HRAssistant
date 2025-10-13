@@ -32,88 +32,48 @@ The final output format is the following:
 - Map the ratings to the standardized format
 - Save the processed data to a standardized format (jsonl)
 """
-
-import glob
-import os
-import json
-import logging
-from typing import Generator, List, Dict, Optional, Tuple, Union
+from typing import Union
 from pathlib import Path
-import json
-from abc import ABC, abstractmethod
 
-from ..utils.preprocess import convert_to_md
+from .dataset import HRDataset
+from .raw_data import RawDataHandler
 
-logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.INFO)
+def preprocess_dataset(handler: RawDataHandler, output_path: Union[str, Path]) -> None:
+    """Preprocess the dataset using the provided RawDataHandler and save to output_path.
 
-class RawDataHandler(ABC):
-    """Base class for handling raw data from different datasets."""
+    Args:
+        handler (RawDataHandler): An instance of a RawDataHandler for the specific dataset.
+        output_path (str): Path to save the processed dataset.
+    """
+    dataset = HRDataset(
+        jobs={},
+        candidates={},
+        ratings=[],
+    )
 
-    def __init__(self, data_dir: Union[str, Path]):
-        self.data_dir = Path(data_dir)
+    # Process job descriptions
+    for job in handler.get_job_descriptions():
+        dataset.add_job(job_id=job['id'], job_description=job['description'])
 
-    @abstractmethod
-    def get_job_descriptions(self) -> Generator[Dict[str, str], None, None]:
-        """Extract job descriptions from the dataset.
+    # Process candidate resumes
+    for candidate in handler.get_candidate_resumes():
+        dataset.add_candidate(candidate_id=candidate['id'], resume=candidate['resume'])
 
-        Returns:
-            A dictionary mapping job IDs to job description texts.
-        """
-        pass
+    # Process ratings
+    for job_id, candidate_id, rating in handler.get_ratings():
+        dataset.add_rating(job_id=job_id, candidate_id=candidate_id, rating=rating)
 
-    @abstractmethod
-    def get_candidate_resumes(self) -> Generator[Dict[str, str], None, None]:
-        """Extract candidate resumes from the dataset.
+    # Save the processed dataset
+    dataset.save_to_jsonl(output_path)
 
-        Returns:
-            A dictionary mapping candidate IDs to resume texts.
-        """
-        pass
+def preprocess_ai_data_entry_mgr(root_dir: Union[str, Path], output_path: Union[str, Path]) -> None:
+    """Preprocess the AI Data Entry Manager dataset and save to output_path.
 
-    @abstractmethod
-    def get_ratings(self) -> Generator[Tuple[str, str, str], None, None]:
-        """Get ratings for each job-candidate pair.
+    Args:
+        root_dir (Union[str, Path]): Root directory of the AI Data Entry Manager dataset.
+        output_path (Union[str, Path]): Path to save the processed dataset.
+    """
+    from ..data import AIDataEntryMgrHandler
 
-        Returns:
-            A generator yielding tuples of (job_id, candidate_id, rating).
-        """
-        pass
-
-    ### Common helper methods ###
-    def _read_file(self, file_path: Path) -> str:
-        """Extract text from a PDF file."""
-        try:
-            return convert_to_md(file_path)
-        except Exception as e:
-            logger.error(f"Error reading PDF file {file_path}: {e}")
-            return ""
-
-    def _find_file_by_name(self, root_dir: Union[str, Path], name: str, recursive: bool = False, extensions: Optional[List[str]]=None) -> Optional[Path]:
-        """Find a file by name in the data directory, optionally filtering by extensions."""
-        root_dir = Path(root_dir)
-        if not root_dir.exists() or not root_dir.is_dir():
-            logger.error(f"Directory {root_dir} does not exist or is not a directory.")
-            raise ValueError(f"Directory {root_dir} does not exist or is not a directory.")
-        if extensions is None:
-            extensions = ['.pdf', '.docx', '.txt']
-
-        matches = []
-        for path in glob(root_dir / ('**' if recursive else '') / '*'):
-            p = Path(path)
-            if p.is_file() and p.suffix.lower() in extensions:
-                stm = p.stem.lower()
-                words = stm.split()
-                flower = name.lower()
-                if all(flower.find(w) != -1 for w in words):
-                    matches.append(p)
-        if len(matches) == 1:
-            return matches[0]
-        elif len(matches) > 1:
-            raise ValueError(f"Multiple files found matching {name} in {root_dir}: {matches}")
-        logger.warning(f"File named {name} not found in {root_dir}.")
-        return None
-
-
-
-
+    handler = AIDataEntryMgrHandler(data_dir=root_dir)
+    preprocess_dataset(handler, output_path)

@@ -25,9 +25,6 @@ class HRDataset(Dataset):
         self.ratings = ratings
 
     def _validate_input(self, jobs, candidates, ratings):
-        assert len(jobs) > 0, "Jobs list cannot be empty."
-        assert len(candidates) > 0, "Candidates list cannot be empty."
-        assert len(ratings) > 0, "Ratings list cannot be empty."
         assert len(jobs)*len(candidates) == len(ratings), "Number of ratings must equal number of jobs times number of candidates."
 
         assert isinstance(jobs, dict), "Jobs must be a dictionary mapping job IDs to descriptions."
