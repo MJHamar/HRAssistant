@@ -38,7 +38,7 @@ from pathlib import Path
 from .dataset import HRDataset
 from .raw_data import RawDataHandler
 
-def preprocess_dataset(handler: RawDataHandler, output_path: Union[str, Path]) -> None:
+def preprocess_dataset(handler: RawDataHandler, output_path: Union[str, Path]) -> HRDataset:
     """Preprocess the dataset using the provided RawDataHandler and save to output_path.
 
     Args:
@@ -66,6 +66,8 @@ def preprocess_dataset(handler: RawDataHandler, output_path: Union[str, Path]) -
     # Save the processed dataset
     dataset.save_to_jsonl(output_path)
 
+    return dataset
+
 def preprocess_ai_data_entry_mgr(root_dir: Union[str, Path], output_path: Union[str, Path]) -> None:
     """Preprocess the AI Data Entry Manager dataset and save to output_path.
 
@@ -73,7 +75,7 @@ def preprocess_ai_data_entry_mgr(root_dir: Union[str, Path], output_path: Union[
         root_dir (Union[str, Path]): Root directory of the AI Data Entry Manager dataset.
         output_path (Union[str, Path]): Path to save the processed dataset.
     """
-    from ..data import AIDataEntryMgrHandler
+    from .ai_data_entry_mgr import AIDataEntryMgrHandler
 
     handler = AIDataEntryMgrHandler(data_dir=root_dir)
-    preprocess_dataset(handler, output_path)
+    dataset = preprocess_dataset(handler, output_path)
