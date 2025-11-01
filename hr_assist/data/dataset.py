@@ -39,6 +39,10 @@ class HRDataset(Dataset):
         self.jobs = dict(jobs)
         self.candidates = dict(candidates)
 
+        # pre-sort for deterministic indexing.
+        self.jobs_list = sorted(self.jobs.keys())
+        self.candidates_list = sorted(self.candidates.keys())
+
         # ratings stored sparsely as dict keyed by (job_id, candidate_id)
         # default value for missing entries is -1 (unknown)
         self.ratings = defaultdict(lambda: -1)
@@ -58,26 +62,6 @@ class HRDataset(Dataset):
                 assert isinstance(triple[2], int), "rating must be an integer"
                 job_id, cand_id, rating = triple
                 self._safe_set_rating(job_id, cand_id, rating)
-
-    def _validate_input(self, jobs, candidates, ratings):
-        # kept for backwards compatibility if needed, not used in new __init__ path
-        assert isinstance(jobs, dict), "Jobs must be a dictionary mapping job IDs to descriptions."
-        assert isinstance(candidates, dict), "Candidates must be a dictionary mapping candidate IDs to resumes."
-        # ratings may be sparse so we don't require full cartesian size
-        if ratings is None:
-            return
-        if isinstance(ratings, dict):
-            iterable = ratings.items()
-        else:
-            iterable = ratings
-        for it in iterable:
-            if isinstance(it, tuple) and len(it) == 2 and isinstance(it[0], tuple):
-                (job_id, candidate_id), rating = it
-            else:
-                job_id, candidate_id, rating = it
-            assert job_id in jobs, f"Job ID {job_id} in ratings not found in jobs."
-            assert candidate_id in candidates, f"Candidate ID {candidate_id} in ratings not found in candidates."
-            assert rating in [-1, 0, 1, 2], "Rating must be one of the following values: -1 (unknown), 0 (unfit), 1 (fit), 2 (accepted)."
 
     def _safe_set_rating(self, job_id: str, cand_id: str, rating: int) -> None:
         if job_id not in self.jobs:
@@ -134,12 +118,12 @@ class HRDataset(Dataset):
             # write sparse ratings as list of triples for portability
             ratings_list = [
                 [job_id, cand_id, rating]
-                for (job_id, cand_id), rating in sorted(self.ratings.items())
+                for (job_id, cand_id), rating in self.ratings.items()
                 if rating != -1
             ]
             data = {
-                "jobs": [{"id": k, "description": v} for k, v in sorted(self.jobs.items())],
-                "candidates": [{"id": k, "resume": v} for k, v in sorted(self.candidates.items())],
+                "jobs": [{"id": k, "description": v} for k, v in self.jobs.items()],
+                "candidates": [{"id": k, "resume": v} for k, v in self.candidates.items()],
                 "ratings": ratings_list,
             }
             json.dump(data, fp=f)
@@ -173,14 +157,12 @@ class HRDataset(Dataset):
         if not (0 <= idx < total):
             raise IndexError("Index out of range")
 
-        jobs_list = sorted(self.jobs.keys())
-        cands_list = sorted(self.candidates.keys())
 
         i = idx // C
         j = idx % C
 
-        job_id = jobs_list[i]
-        cand_id = cands_list[j]
+        job_id = self.jobs_list[i]
+        cand_id = self.candidates_list[j]
 
         job = self.jobs[job_id]
         candidate = self.candidates[cand_id]
@@ -205,7 +187,7 @@ class HRDataset(Dataset):
         cand_map: Dict[str, str] = {}
 
         # Merge jobs from other
-        for oj_id, oj_desc in sorted(other.jobs.items()):
+        for oj_id, oj_desc in other.jobs.items():
             if oj_id not in merged_jobs:
                 merged_jobs[oj_id] = oj_desc
                 job_map[oj_id] = oj_id
@@ -223,7 +205,7 @@ class HRDataset(Dataset):
                     job_map[oj_id] = new_id
 
         # Merge candidates from other
-        for oc_id, oc_resume in sorted(other.candidates.items()):
+        for oc_id, oc_resume in other.candidates.items():
             if oc_id not in merged_cands:
                 merged_cands[oc_id] = oc_resume
                 cand_map[oc_id] = oc_id
