@@ -7,6 +7,7 @@ from typing import Generator, List, Dict, Optional, Tuple, Union
 from pathlib import Path
 import json
 from abc import ABC, abstractmethod
+from unicode import unicode
 
 from ..utils.preprocess import convert_to_md
 
@@ -68,9 +69,9 @@ class RawDataHandler(ABC):
         for path in glob(root_dir / ('**' if recursive else '') / '*'):
             p = Path(path)
             if p.is_file() and p.suffix.lower() in extensions:
-                stm = p.stem.lower()
+                stm = unicode(p.stem.lower()) # normalize to unicode for matching
                 words = stm.split()
-                flower = name.lower()
+                flower = unicode(name.lower()) # normalize to unicode for matching
                 if all(flower.find(w) != -1 for w in words):
                     matches.append(p)
         if len(matches) == 1:
