@@ -79,3 +79,31 @@ def preprocess_ai_data_entry_mgr(root_dir: Union[str, Path], output_path: Union[
 
     handler = AIDataEntryMgrHandler(data_dir=root_dir)
     dataset = preprocess_dataset(handler, output_path)
+    return dataset
+
+def preprocess_alkalmazas_tesztelo(root_dir: Union[str, Path], output_path: Union[str, Path]) -> None:
+    """Preprocess the Alkalmazas Tesztelo dataset and save to output_path.
+
+    Args:
+        root_dir (Union[str, Path]): Root directory of the Alkalmazas Tesztelo dataset.
+        output_path (Union[str, Path]): Path to save the processed dataset.
+    """
+    from .alkalmazas_tesztelo import AlkalmazasTeszteloHandler
+
+    handler = AlkalmazasTeszteloHandler(data_dir=root_dir)
+    dataset = preprocess_dataset(handler, output_path)
+    return dataset
+
+def preprocess_penzugyi_auditor(root_dir: Union[str, Path], output_path: Union[str, Path]) -> None:
+    """Preprocess the Penzugyi Auditor dataset and save to output_path.
+
+    Args:
+        root_dir (Union[str, Path]): Root directory of the Penzugyi Auditor dataset.
+        output_path (Union[str, Path]): Path to save the processed dataset.
+    """
+    from .penzugyi_auditor import PenzugyiAuditorHandler
+
+    handler = PenzugyiAuditorHandler(data_dir=root_dir)
+    dataset = preprocess_dataset(handler, output_path)
+    return dataset
+
