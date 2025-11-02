@@ -107,3 +107,34 @@ def preprocess_penzugyi_auditor(root_dir: Union[str, Path], output_path: Union[s
     dataset = preprocess_dataset(handler, output_path)
     return dataset
 
+def preprocess_all(
+    root_dirs: dict[str, Union[str, Path]],
+    output_paths: dict[str, Union[str, Path]],
+) -> None:
+    """Preprocess all supported datasets.
+
+    Args:
+        root_dirs (dict[str, Union[str, Path]]): Mapping of dataset names to their root directories.
+        output_paths (dict[str, Union[str, Path]]): Mapping of dataset names to their output paths.
+    """
+    dataset_functions = {
+        "ai_data_entry_mgr": preprocess_ai_data_entry_mgr,
+        "alkalmazas_tesztelo": preprocess_alkalmazas_tesztelo,
+        "penzugyi_auditor": preprocess_penzugyi_auditor,
+    }
+
+    all_data = None
+
+    for dataset_name, root_dir in root_dirs.items():
+        if dataset_name in dataset_functions:
+            output_path = output_paths.get(dataset_name)
+            if output_path is not None:
+                data = dataset_functions[dataset_name](root_dir, output_path)
+                if all_data is None:
+                    all_data = data
+                else:
+                    all_data = all_data.merge(data)
+        else:
+            raise ValueError(f"Unsupported dataset: {dataset_name}")
+
+    return all_data
